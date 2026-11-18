@@ -13,7 +13,7 @@ production SRU URL for the original article, or no URL when the notice names no 
 |------|------------|
 | `agent_eval_offline.py` | The eval script. Runs `mlflow.genai.evaluate` over the dataset with a `predict_fn` that calls the agent. |
 | `eval_auth.py` | Auth shim. Patches the agent's `ws` client and `mcp_url()` at runtime so it reaches the OAuth-gated app as a service principal. `agent/agent_server/agent.py` stays unmodified. |
-| `datasets/sru-eval-0.csv` | 11 rows: one per `extraction_rule` value in the source spreadsheet, including a bare notice (`Correction`) and an issue-level notice. |
+| `datasets/sru-eval-0.csv` | 41 rows covering every `extraction_rule` in the source spreadsheet (2 to 5 rows each), including 4 bare notices, 4 issue-level notices and 3 titles the Supervisor Agent is known to answer with an empty reply. |
 
 Differences from the template:
 
@@ -75,7 +75,7 @@ points at this app; each value can also be set with an environment variable:
 | `SECRET_SCOPE` | `sru-syntax-eval-secrets` | none |
 | `AUTH_MODE` | `service_principal` | `SRU_EVAL_AUTH` |
 
-A run takes about 2 to 3 minutes (11 rows, 3 at a time; the Supervisor Agent behind the tool takes about
+A run takes about 7 minutes (41 rows, 3 at a time; the Supervisor Agent behind the tool takes about
 20 seconds per title). Metrics print at the end; per-row results and traces are in the experiment's
 **Evaluations** tab.
 
@@ -113,17 +113,41 @@ changed to handle bare notices (two runs after):
 * The Supervisor Agent's occasional empty replies would show up as `sru_url_match` failures (none occurred
   in these runs).
 
+After the dataset grew to 41 rows (one run, 2026-11-18):
+
+| Metric | Mean |
+|---|---|
+| `sru_url_match` | 0.93 (38/41) |
+| `correctness` | 0.93 |
+| `no_invented_urls` | 0.93 |
+| `relevant_to_notice` | 0.83 |
+| `safety` | 1.00 |
+
+What the new rows exposed:
+
+* **Empty Supervisor Agent replies (agent error):** 3 titles got no URL: "Overexpression of FBR41 ...",
+  "Structure–Function Parameters ..." and "Homologous promoter derived ...". These are the only
+  `sru_url_match` failures.
+* **Issue-level notices without notice wording (agent error):** for `Taxon 61(6)` and
+  `Errata to taxon 59(5)` the agent asked a clarifying question instead of saying the notice names no single
+  article. No URL was given, so `sru_url_match` passes, but both LLM guidelines fail.
+* **Judge false negatives:** `relevant_to_notice` failed two correct URL answers for title-only notices
+  ("AAFP and ISFM Guidelines ...", "p21-Activated Kinase 1 ..."), apparently because the request has no
+  notice wording.
+
 ## Dataset
 
 `datasets/sru-eval-0.csv` columns: `request` (the notice title, sent as-is), `expected_title` (the
 `alma.title` term from `users.amanda_xu.build_sru_url`, blank when no URL is expected) and `source_rule`
-(the extraction rule, logged as a tag). Rows came from
-`Correction-Sample2-1494-Extracted-Titles-FINAL.xlsx`, one per `extraction_rule`.
+(the extraction rule, logged as a tag). Every `request` is an `erratumn_article_title` from
+`Correction-Sample2-1494-Extracted-Titles-FINAL.xlsx`. The first 11 rows are one per `extraction_rule`
+(random_state=7); the next 30 add up to 3 more per rule (random_state=11) plus the known empty-reply titles.
 
-To add rows, append to the CSV and fill `expected_title` from the UC function:
+To add rows, append to the CSV and fill `expected_title` from the UC function (blank result = no URL expected):
 
 ```sql
-SELECT url_decode(regexp_extract(users.amanda_xu.build_sru_url(:title), 'query=(.*)$', 1))
+SELECT coalesce(regexp_extract(url_decode(users.amanda_xu.build_sru_url(:title)),
+                'alma.title="(.*)" and alma.local_field_912', 1), '') AS expected_title
 ```
 
 If the title rules change, regenerate every `expected_title` the same way.
