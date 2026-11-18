@@ -31,14 +31,17 @@ https://nal.alma.exlibrisgroup.com/view/sru/01NAL_INST?version=1.2&operation=sea
 
 | Folder | What it is |
 | --- | --- |
-| [`sru-syntax-mcp/`](sru-syntax-mcp/README.md) | The project: MCP server and agent (Databricks App), bundle config, agent skill, offline evaluation. |
+| [`title-extraction/`](title-extraction/README.md) | Part 1: `erratum_title_extractor.py`, the spreadsheet processing script. |
+| [`sru-syntax-mcp/`](sru-syntax-mcp/README.md) | Part 2: MCP server and agent (Databricks App), bundle config, agent skill, offline evaluation. |
 | [`mcp-hackathon/`](mcp-hackathon/README.md) | The GSA MCP Hackathon server template this project started from (FastMCP, deploy kits, eval templates). |
 
 ## Part 1: Spreadsheet processing
 
 **Input:** an Alma export of correction notice records. The main sample,
-`Correction-Sample2-1494-20261021.xlsx`, has 1,494 records; the title is in column A and the MMS ID in another
-column.
+`Correction-Sample2-1494-20261021.xlsx`, has 1,494 records with `Title` and `MMS ID` columns.
+
+**Code:** [`title-extraction/erratum_title_extractor.py`](title-extraction/README.md)
+(`python erratum_title_extractor.py INPUT.xlsx`; needs `pandas` and `openpyxl`).
 
 **Output:** the same records with these columns, as a downloadable Excel workbook:
 
