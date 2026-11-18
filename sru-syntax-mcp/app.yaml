@@ -1,0 +1,8 @@
+command:
+  - python
+  - app.py
+env:
+  - name: SERVING_ENDPOINT
+    valueFrom: serving-endpoint
+  - name: AGENT_TIMEOUT_SECONDS
+    value: "300"
