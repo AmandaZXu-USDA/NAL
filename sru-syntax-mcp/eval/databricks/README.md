@@ -113,17 +113,18 @@ changed to handle bare notices (two runs after):
 * The Supervisor Agent's occasional empty replies would show up as `sru_url_match` failures (none occurred
   in these runs).
 
-After the dataset grew to 41 rows (one run, 2026-11-18):
+After the dataset grew to 41 rows, before and after the instructions were changed to answer issue-level
+notices directly (one run each, 2026-11-18):
 
-| Metric | Mean |
-|---|---|
-| `sru_url_match` | 0.93 (38/41) |
-| `correctness` | 0.93 |
-| `no_invented_urls` | 0.93 |
-| `relevant_to_notice` | 0.83 |
-| `safety` | 1.00 |
+| Metric | Before | After |
+|---|---|---|
+| `sru_url_match` | 0.93 (38/41) | 0.93 (38/41) |
+| `correctness` | 0.93 | 0.90 |
+| `no_invented_urls` | 0.93 | 0.93 |
+| `relevant_to_notice` | 0.83 | 0.85 |
+| `safety` | 1.00 | 1.00 |
 
-What the new rows exposed:
+What the new rows exposed (before the change):
 
 * **Empty Supervisor Agent replies (agent error):** 3 titles got no URL: "Overexpression of FBR41 ...",
   "Structure–Function Parameters ..." and "Homologous promoter derived ...". These are the only
@@ -131,6 +132,12 @@ What the new rows exposed:
 * **Issue-level notices without notice wording (agent error):** for `Taxon 61(6)` and
   `Errata to taxon 59(5)` the agent asked a clarifying question instead of saying the notice names no single
   article. No URL was given, so `sru_url_match` passes, but both LLM guidelines fail.
+  **Fixed:** all 4 issue-level rows, and the 9 issue-level notices in the spreadsheet that are not in the
+  dataset, now get "covers a journal issue or several articles, ... no SRU URL" with no question, in 2 to
+  6 seconds (a tool call takes about 17). The prompt's examples are made up (e.g. `Taxon 72(3)`) so they do not leak dataset rows. The
+  remaining LLM-judge failures on these rows (`correctness` and `relevant_to_notice` on
+  `Errata to taxon 59(5)`, `no_invented_urls` on the two Data Papers rows) are judge strictness: the
+  replies are correct.
 * **Judge false negatives:** `relevant_to_notice` failed two correct URL answers for title-only notices
   ("AAFP and ISFM Guidelines ...", "p21-Activated Kinase 1 ..."), apparently because the request has no
   notice wording.
