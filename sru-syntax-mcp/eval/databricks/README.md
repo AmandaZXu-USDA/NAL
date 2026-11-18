@@ -13,7 +13,7 @@ production SRU URL for the original article, or no URL when the notice names no 
 |------|------------|
 | `agent_eval_offline.py` | The eval script. Runs `mlflow.genai.evaluate` over the dataset with a `predict_fn` that calls the agent. |
 | `eval_auth.py` | Auth shim. Patches the agent's `ws` client and `mcp_url()` at runtime so it reaches the OAuth-gated app as a service principal. `agent/agent_server/agent.py` stays unmodified. |
-| `datasets/sru-eval-0.csv` | 41 rows covering every `extraction_rule` in the source spreadsheet (2 to 5 rows each), including 4 bare notices, 4 issue-level notices and 3 titles the Supervisor Agent is known to answer with an empty reply. |
+| `datasets/sru-eval-0.csv` | 41 rows covering every `extraction_rule` in the source spreadsheet (2 to 5 rows each), including 4 bare notices, 4 issue-level notices and the 2 titles that got an empty Supervisor Agent reply in the first 10-title test. |
 
 Differences from the template:
 
