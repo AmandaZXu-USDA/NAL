@@ -1,13 +1,20 @@
 """Custom MCP server (streamable HTTP at /mcp) exposing the Agent Bricks Supervisor Agent
 "agent-sru-syntax" (serving endpoint mas-c8629507-endpoint) as one MCP tool.
+
+The same app also hosts the SRU syntax agent (agent.py), which uses this MCP server:
+  POST /invocations and POST /responses  - OpenAI Responses-style request: {"input": [...] or "text"}
+  GET  /health                           - liveness check
 """
 import asyncio
 import os
+import uuid
 
 import requests
 import uvicorn
 from databricks.sdk import WorkspaceClient
 from mcp.server.fastmcp import FastMCP
+from starlette.requests import Request
+from starlette.responses import JSONResponse
 
 ENDPOINT = os.environ.get("SERVING_ENDPOINT", "mas-c8629507-endpoint")
 TIMEOUT_S = int(os.environ.get("AGENT_TIMEOUT_SECONDS", "300"))
@@ -63,6 +70,49 @@ async def build_sru_search_url(correction_title: str) -> str:
 
 
 app = mcp.streamable_http_app()  # serves the MCP endpoint at /mcp
+
+
+# ---- SRU syntax agent endpoints (same app) ----
+
+async def health(request: Request) -> JSONResponse:
+    return JSONResponse({"status": "ok"})
+
+
+async def invocations(request: Request) -> JSONResponse:
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Request body must be JSON"}, status_code=400)
+    messages = body.get("input") if isinstance(body, dict) else None
+    if not isinstance(messages, (str, list)) or not messages:
+        return JSONResponse({"error": "Body must include 'input' (a string or a list of messages)"}, status_code=400)
+    try:
+        from agent import run_agent  # imported lazily so the MCP tool keeps working if agent setup fails
+
+        text = await run_agent(messages)
+    except Exception as e:
+        return JSONResponse({"error": f"Agent error: {e}"[:1000]}, status_code=502)
+    return JSONResponse(
+        {
+            "id": f"resp_{uuid.uuid4().hex}",
+            "object": "response",
+            "status": "completed",
+            "output": [
+                {
+                    "type": "message",
+                    "id": f"msg_{uuid.uuid4().hex}",
+                    "role": "assistant",
+                    "status": "completed",
+                    "content": [{"type": "output_text", "text": text or "", "annotations": []}],
+                }
+            ],
+        }
+    )
+
+
+app.add_route("/health", health, methods=["GET"])
+app.add_route("/invocations", invocations, methods=["POST"])
+app.add_route("/responses", invocations, methods=["POST"])
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("DATABRICKS_APP_PORT", "8000")))
