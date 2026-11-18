@@ -11,7 +11,8 @@ The workspace is at its 100-app limit, so the MCP server and the agent share the
 | `POST /invocations`, `POST /responses` | `mcp_server/agent.py` | OpenAI Agents SDK agent that uses the `/mcp` tool over localhost |
 | `GET /health` | `mcp_server/app.py` | Liveness check |
 
-The `sru-syntax-agent-experiment` (in `databricks.yml`) receives the agent's traces.
+Agent traces go to the experiment `/Users/amanda.xu@usda.gov/sru-syntax-agent-uc-experiment`
+(ID `131270370350843`), which stores them in Unity Catalog tables `users.amanda_xu.sru_syntax_agent_*`.
 
 ## Layout
 
@@ -32,7 +33,8 @@ The app gets these through `valueFrom` in `mcp_server/app.yaml`:
 
 * `serving-endpoint` -> `SERVING_ENDPOINT`: Supervisor Agent endpoint, `CAN_QUERY`
 * `model-service` -> `MODEL_SERVICE`: Unity Gateway model service (default `models.ai.gpt-5-6-luna`), `EXECUTE`
-* `app-experiment` -> `MLFLOW_EXPERIMENT_ID`: bundle experiment, `CAN_EDIT`
+* `app-experiment` -> `MLFLOW_EXPERIMENT_ID`: Unity Catalog-backed experiment (`var.trace_experiment_id`), `CAN_EDIT`
+* `trace-annotations`, `trace-logs`, `trace-metrics`, `trace-spans`: the four `users.amanda_xu.sru_syntax_agent_otel_*` tables, `MODIFY` (includes `SELECT`)
 
 ## Deploy
 
@@ -64,6 +66,13 @@ Each title can take 60-90 seconds because the Supervisor Agent does the lookup.
 ## Tracing
 
 `mlflow.openai.autolog()` traces every model and MCP tool call automatically. `run_agent` adds an
-`AGENT` span plus a `preprocessing` child span. To keep traces in Unity Catalog
-(`users.amanda_xu`), run `setup/create_uc_backed_experiment.py` once and point the app's
-`app-experiment` resource at the printed experiment ID.
+`AGENT` span plus a `preprocessing` child span.
+
+Traces are stored in Unity Catalog under `users.amanda_xu`:
+
+* `sru_syntax_agent_otel_spans`, `_otel_logs`, `_otel_metrics`, `_otel_annotations` (tables)
+* `sru_syntax_agent_trace_unified`, `sru_syntax_agent_trace_metadata` (views)
+
+`setup/create_uc_backed_experiment.py` created the experiment and tables (already run once). To use a
+different location, run it with new names and set `trace_experiment_id` / `trace_table_prefix` in
+`databricks.yml`. The original workspace-backed `sru-syntax-agent-experiment` is kept for its earlier trace.
