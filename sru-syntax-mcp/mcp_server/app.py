@@ -6,6 +6,7 @@ The same app also hosts the SRU syntax agent (agent.py), which uses this MCP ser
   GET  /health                           - liveness check
 """
 import asyncio
+import logging
 import os
 import uuid
 
@@ -13,6 +14,8 @@ import requests
 import uvicorn
 from databricks.sdk import WorkspaceClient
 from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.exceptions import ToolError
+from mcp.types import ToolAnnotations
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
@@ -25,6 +28,43 @@ EMPTY_MSG = (
 )
 
 _ws = WorkspaceClient()  # app service principal credentials from the Apps environment
+
+# Server-side logs carry only allowlisted fields (error id, category, status code, exception class).
+# Upstream bodies, headers, URLs, titles and exception text are never logged or returned to clients.
+logging.basicConfig(level=logging.INFO)
+logging.getLogger("httpx").setLevel(logging.WARNING)  # its INFO lines include request URLs
+log = logging.getLogger("sru_syntax_mcp")
+
+
+class UpstreamError(Exception):
+    """Failure calling the Supervisor Agent, with a stable category safe to show clients."""
+
+    MESSAGES = {
+        "timeout": "The SRU syntax agent did not respond in time. Try again later.",
+        "unavailable": "The SRU syntax agent is unavailable. Try again later.",
+        "rate_limited": "The SRU syntax agent is busy. Wait a moment and try again.",
+        "permission_denied": "This app is not allowed to call the SRU syntax agent. Contact the app owner.",
+        "bad_response": "The SRU syntax agent returned an unexpected response. Try again later.",
+    }
+
+    def __init__(self, category: str, status_code: int | None = None):
+        self.category = category
+        self.status_code = status_code
+        self.error_id = uuid.uuid4().hex[:12]
+        super().__init__(category)
+
+    def client_message(self) -> str:
+        return f"{self.MESSAGES[self.category]} (error {self.category}, id {self.error_id})"
+
+
+def _category_for_status(status: int) -> str:
+    if status in (401, 403):
+        return "permission_denied"
+    if status == 429:
+        return "rate_limited"
+    if status in (408, 504):
+        return "timeout"
+    return "unavailable"
 
 mcp = FastMCP(
     "sru-syntax-mcp",
@@ -48,24 +88,52 @@ def _final_text(resp: dict) -> str:
 def _call_agent(title: str) -> str:
     headers = _ws.config.authenticate()
     headers["Content-Type"] = "application/json"
-    r = requests.post(
-        f"{_ws.config.host}/serving-endpoints/{ENDPOINT}/invocations",
-        headers=headers,
-        json={"input": [{"role": "user", "content": title}]},  # title passed through unchanged
-        timeout=TIMEOUT_S,
-    )
+    try:
+        r = requests.post(
+            f"{_ws.config.host}/serving-endpoints/{ENDPOINT}/invocations",
+            headers=headers,
+            json={"input": [{"role": "user", "content": title}]},  # title passed through unchanged
+            timeout=TIMEOUT_S,
+            allow_redirects=False,
+        )
+    except requests.Timeout:
+        raise UpstreamError("timeout") from None
+    except requests.RequestException:
+        raise UpstreamError("unavailable") from None
     if r.status_code != 200:
-        raise RuntimeError(f"Agent endpoint {ENDPOINT} returned HTTP {r.status_code}: {r.text[:500]}")
-    return _final_text(r.json())
+        raise UpstreamError(_category_for_status(r.status_code), r.status_code)
+    try:
+        return _final_text(r.json())
+    except ValueError:
+        raise UpstreamError("bad_response", r.status_code) from None
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Build NAL Alma SRU search URL",
+        readOnlyHint=True,  # only reads; creates or changes nothing
+        destructiveHint=False,
+        idempotentHint=True,  # same title, same intent; safe to retry
+        openWorldHint=False,  # calls only this workspace's Supervisor Agent endpoint
+    )
+)
 async def build_sru_search_url(correction_title: str) -> str:
     """Send an erratum/correction notice title (e.g. 'Correction: <title>', 'Correction to “<title>”',
     'Corrigendum: ...') to the agent-sru-syntax agent and return its reply, which contains the
     NAL Alma production SRU searchRetrieve URL for the original article. Pass the full title exactly
-    as given. Replies can take 60-90 seconds."""
-    text = await asyncio.to_thread(_call_agent, correction_title)
+    as given. Replies can take 60-90 seconds.
+
+    Errors are returned as a short message with a stable category (timeout, unavailable, rate_limited,
+    permission_denied, bad_response) and an error id for the app owner."""
+    try:
+        text = await asyncio.to_thread(_call_agent, correction_title)
+    except UpstreamError as e:
+        log.warning("tool_error error_id=%s category=%s status=%s", e.error_id, e.category, e.status_code)
+        raise ToolError(e.client_message()) from None
+    except Exception as e:  # anything unexpected (e.g. auth setup): never expose its text
+        err = UpstreamError("unavailable")
+        log.warning("tool_error error_id=%s category=unexpected exception=%s", err.error_id, type(e).__name__)
+        raise ToolError(err.client_message()) from None
     return text or EMPTY_MSG
 
 
@@ -91,7 +159,12 @@ async def invocations(request: Request) -> JSONResponse:
 
         text = await run_agent(messages)
     except Exception as e:
-        return JSONResponse({"error": f"Agent error: {e}"[:1000]}, status_code=502)
+        error_id = uuid.uuid4().hex[:12]
+        log.warning("agent_error error_id=%s exception=%s", error_id, type(e).__name__)
+        return JSONResponse(
+            {"error": f"The SRU syntax agent could not complete the request. Try again later. (error agent_failed, id {error_id})"},
+            status_code=502,
+        )
     return JSONResponse(
         {
             "id": f"resp_{uuid.uuid4().hex}",

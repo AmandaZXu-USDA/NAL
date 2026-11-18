@@ -105,11 +105,16 @@ Met:
 * Remote access requires Databricks Apps OAuth and `CAN USE`; the app runs as its own service principal with
   least-privilege resources.
 * Titles and agent replies are treated as data; the agent is told never to invent URLs.
+* Errors are stable categories with an error id, never upstream bodies, URLs or exception text:
+  * Tool (`isError: true`): `timeout`, `unavailable`, `rate_limited`, `permission_denied`, `bad_response`,
+    e.g. `The SRU syntax agent is unavailable. Try again later. (error unavailable, id 51443671b919)`.
+  * `/invocations`: HTTP 502 with `error agent_failed, id <id>`.
+  * Server logs (`databricks apps logs sru-syntax-mcp`) hold only `error_id`, category, HTTP status and exception
+    class, so search the logs by the error id a user reports. Redirects from the agent endpoint are not followed.
+* The tool has MCP annotations: `readOnlyHint: true`, `destructiveHint: false`, `idempotentHint: true`,
+  `openWorldHint: false` (annotations are hints, not access control).
 
 Gaps to fix before calling the server complete:
 
-* `mcp_server/app.py` puts up to 500 characters of the upstream response body in its error, and `/invocations`
-  returns the exception text. Replace both with stable error categories and log details server-side only.
-* There are no automated tests for authorization denial paths or for sensitive data in errors and logs.
-* The tool has no MCP annotations (`readOnlyHint: true`, `destructiveHint: false`, `idempotentHint: true`,
-  `openWorldHint: false`).
+* There are no automated tests for authorization denial paths or for sensitive data in errors and logs
+  (error paths were checked by hand on 2026-11-18 with a missing endpoint and a missing model).
