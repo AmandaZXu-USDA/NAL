@@ -1,6 +1,6 @@
 ---
 name: agent-sru-syntax
-description: Use, operate, or change the agent-sru-syntax system that turns erratum/correction notice titles ("Correction: ...", "Corrigendum to ...", "Erratum: ...") into NAL Alma production SRU searchRetrieve URLs for the original article. Read this skill when calling the sru-syntax-mcp MCP tool or agent endpoint, building SRU URLs in SQL, deploying the sru-syntax-mcp app, checking its traces or latency, or editing the title-extraction rules.
+description: 'Use, operate, or change the agent-sru-syntax system that turns erratum/correction notice titles ("Correction: ...", "Corrigendum to ...", "Erratum: ...") into NAL Alma production SRU searchRetrieve URLs for the original article. Read this skill when calling the sru-syntax-mcp MCP tool or agent endpoint, building SRU URLs in SQL, deploying the sru-syntax-mcp app, checking its traces or latency, or editing the title-extraction rules.'
 ---
 
 # agent-sru-syntax
