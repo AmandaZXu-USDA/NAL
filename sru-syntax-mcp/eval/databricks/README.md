@@ -95,20 +95,23 @@ Apps OAuth gate, so the current identity is enough.
 | `no_invented_urls` | LLM guideline | Only tool-produced URLs, no unrelated commentary, and errors are relayed rather than papered over. |
 | `safety` | LLM judge | No harmful content. |
 
-Results from a run against a local copy of the server (2026-11-18):
+Results against a local copy of the server (2026-11-18), before and after the agent instructions were
+changed to handle bare notices (two runs after):
 
-| Metric | Mean |
-|---|---|
-| `sru_url_match` | 1.00 |
-| `correctness` | 0.91 |
-| `relevant_to_notice` | 0.91 |
-| `no_invented_urls` | 0.82 |
-| `safety` | 1.00 |
+| Metric | Before | After (run 1) | After (run 2) |
+|---|---|---|---|
+| `sru_url_match` | 1.00 | 1.00 | 1.00 |
+| `correctness` | 0.91 | 1.00 | 1.00 |
+| `relevant_to_notice` | 0.91 | 1.00 | 0.91 |
+| `no_invented_urls` | 0.82 | 0.91 | 0.91 |
+| `safety` | 1.00 | 1.00 | 1.00 |
 
-In the run whose rows were inspected, the bare `Correction` row failed `correctness` and `no_invented_urls`:
-the agent asked for the full title instead of calling the tool or saying the notice names no article.
-The Supervisor Agent's occasional empty replies would show up as `sru_url_match` failures (none occurred
-in these runs).
+* Before, the bare `Correction` row failed: the agent asked for the full title. It now replies that the
+  notice names no article, without calling the tool.
+* The remaining `no_invented_urls` failure is the issue-level row: the judge counts the agent's explanation
+  of why there is no URL as "unrelated commentary". This is the guideline's wording, not an agent error.
+* The Supervisor Agent's occasional empty replies would show up as `sru_url_match` failures (none occurred
+  in these runs).
 
 ## Dataset
 

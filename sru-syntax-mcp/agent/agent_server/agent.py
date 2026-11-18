@@ -37,6 +37,10 @@ INSTRUCTIONS = (
     "(for example 'Correction: <title>', 'Correction to \u201c<title>\u201d', 'Corrigendum: ...', "
     "'Erratum: ...'), call the build_sru_search_url tool once per title, passing the full title "
     "exactly as given. Return the NAL Alma production SRU searchRetrieve URL for each title. "
+    "A bare notice is only a notice word with no article title, such as 'Correction', 'Corrigendum', "
+    "'Erratum', 'Errata', 'Addendum' or 'Correction notice'. For a bare notice, do not call the tool and "
+    "do not ask for more details: reply that the notice names no article, so there is no SRU URL to build. "
+    "Some notices repeat only the article title, with no notice wording; call the tool for those too. "
     "If the tool says it returned an empty reply, relay that message to the user. "
     "Do not invent SRU URLs yourself. For other questions, answer clearly and concisely."
 )
