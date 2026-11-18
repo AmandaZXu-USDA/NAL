@@ -21,11 +21,11 @@ resources:
       name: /Users/${workspace.current_user.userName}/sru-syntax-agent-experiment
 
   apps:
-    # MCP server (app.py, app.yaml, requirements.txt in this folder)
+    # MCP server (mcp_server/ folder)
     sru_syntax_mcp:
       name: ${var.mcp_app_name}
       description: "MCP server exposing the agent-sru-syntax Supervisor Agent as an MCP tool"
-      source_code_path: ./
+      source_code_path: ./mcp_server
       resources:
         - name: serving-endpoint
           description: "agent-sru-syntax Supervisor Agent endpoint"

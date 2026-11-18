@@ -6,7 +6,7 @@ This folder is a Declarative Automation Bundle with two Databricks Apps and one 
 
 | Resource | Source | What it does |
 | --- | --- | --- |
-| `sru-syntax-mcp` app | `app.py`, `app.yaml`, `requirements.txt` | MCP server (streamable HTTP at `/mcp`) with one tool, `build_sru_search_url`, that calls the agent-sru-syntax Supervisor Agent endpoint `mas-c8629507-endpoint` |
+| `sru-syntax-mcp` app | `mcp_server/` | MCP server (streamable HTTP at `/mcp`) with one tool, `build_sru_search_url`, that calls the agent-sru-syntax Supervisor Agent endpoint `mas-c8629507-endpoint` |
 | `sru-syntax-agent` app | `agent/` | OpenAI Agents SDK agent that uses the MCP server's tool; serves `POST /invocations` and `POST /responses` |
 | `sru-syntax-agent-experiment` | `databricks.yml` | MLflow experiment that receives the agent's traces |
 
@@ -15,7 +15,8 @@ This folder is a Declarative Automation Bundle with two Databricks Apps and one 
 ```
 sru-syntax-mcp/
   databricks.yml                     bundle: apps, experiment, variables
-  app.py, app.yaml, requirements.txt MCP server app
+  mcp_server/
+    app.py, app.yaml, requirements.txt  MCP server app
   agent/
     app.yaml                         env from app resources; runs `uv run start-server`
     pyproject.toml                   dependencies + start-server entry point
