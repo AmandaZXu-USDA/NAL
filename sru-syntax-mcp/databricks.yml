@@ -1,0 +1,59 @@
+bundle:
+  name: sru_syntax
+
+variables:
+  mcp_app_name:
+    description: "Name of the MCP server app (already deployed as sru-syntax-mcp; bind it before the first deploy)"
+    default: sru-syntax-mcp
+  agent_app_name:
+    description: "Name of the agent app (lowercase letters, digits, hyphens; max 30 chars)"
+    default: sru-syntax-agent
+  serving_endpoint:
+    description: "Agent Bricks Supervisor Agent endpoint (agent-sru-syntax) the MCP server calls"
+    default: mas-c8629507-endpoint
+  model_service:
+    description: "Unity Gateway model service the agent uses"
+    default: models.ai.gpt-5-6-luna
+
+resources:
+  experiments:
+    sru_agent_experiment:
+      name: /Users/${workspace.current_user.userName}/sru-syntax-agent-experiment
+
+  apps:
+    # MCP server (app.py, app.yaml, requirements.txt in this folder)
+    sru_syntax_mcp:
+      name: ${var.mcp_app_name}
+      description: "MCP server exposing the agent-sru-syntax Supervisor Agent as an MCP tool"
+      source_code_path: ./
+      resources:
+        - name: serving-endpoint
+          description: "agent-sru-syntax Supervisor Agent endpoint"
+          serving_endpoint:
+            name: ${var.serving_endpoint}
+            permission: CAN_QUERY
+
+    # Agent (agent/ folder) that calls the MCP server
+    sru_syntax_agent:
+      name: ${var.agent_app_name}
+      description: "SRU syntax agent: correction titles to NAL Alma SRU search URLs"
+      source_code_path: ./agent
+      resources:
+        - name: model-service
+          uc_securable:
+            securable_full_name: ${var.model_service}
+            securable_type: MODEL_SERVICE
+            permission: EXECUTE
+        - name: app-experiment
+          experiment:
+            experiment_id: ${resources.experiments.sru_agent_experiment.id}
+            permission: CAN_EDIT
+        - name: mcp-server-app
+          app:
+            name: ${resources.apps.sru_syntax_mcp.name}
+            permission: CAN_USE
+
+targets:
+  dev:
+    mode: development
+    default: true
