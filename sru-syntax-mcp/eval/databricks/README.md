@@ -16,7 +16,8 @@ production SRU URL for the original article, or no URL when the notice names no 
 **Evaluation report:** [`doc/sru-syntax-mcp-evaluation-report.pdf`](doc/sru-syntax-mcp-evaluation-report.pdf)
 summarizes Inspector Gadget testing, this offline evaluation, online evaluation (production
 monitoring), the `kindly-lamb-651` ToolCallEfficiency run, per-step agent latency, and live testing on
-November 19, 2026 (titles per minute, agent vs rules function, empty-reply retry).
+November 19, 2026 (titles per minute, agent vs rules function, empty-reply retry), and ends with lessons
+learned and recommendations.
 
 ## What's in this kit
 
