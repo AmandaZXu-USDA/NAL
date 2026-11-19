@@ -4,10 +4,15 @@
 The same app also hosts the SRU syntax agent (agent.py), which uses this MCP server:
   POST /invocations and POST /responses  - OpenAI Responses-style request: {"input": [...] or "text"}
   GET  /health                           - liveness check
+and a browser page for librarians:
+  GET  /                                 - paste one correction title, get the SRU URL as a link
+  POST /api/sru-url                      - JSON {"title": "..."} -> {"text": ..., "urls": [...]}
 """
 import asyncio
 import logging
 import os
+import re
+import secrets
 import uuid
 
 import requests
@@ -18,7 +23,7 @@ from mcp.server.fastmcp.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import HTMLResponse, JSONResponse
 
 ENDPOINT = os.environ.get("SERVING_ENDPOINT", "mas-c8629507-endpoint")
 TIMEOUT_S = int(os.environ.get("AGENT_TIMEOUT_SECONDS", "300"))
@@ -222,6 +227,139 @@ async def invocations(request: Request) -> JSONResponse:
     )
 
 
+# ---- Browser page for librarians (same app; Databricks Apps handles the login) ----
+
+SRU_PREFIX = "https://nal.alma.exlibrisgroup.com/view/sru/"
+MAX_TITLE_CHARS = 1000
+_SRU_URL_RE = re.compile(re.escape(SRU_PREFIX) + r"[^\s<>\"'`]+")
+
+PAGE = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NAL SRU search URL from a correction title</title>
+<style nonce="__NONCE__">
+  body { font-family: system-ui, -apple-system, "Segoe UI", Arial, sans-serif; max-width: 52rem; margin: 2rem auto; padding: 0 1rem; color: #1b1b1b; line-height: 1.5; }
+  h1 { font-size: 1.5rem; margin-bottom: .25rem; }
+  label { font-weight: 600; display: block; margin: 1rem 0 .25rem; }
+  textarea { width: 100%; box-sizing: border-box; font: inherit; padding: .5rem; min-height: 5rem; }
+  button { font: inherit; padding: .45rem 1rem; margin-top: .5rem; cursor: pointer; }
+  #status { margin-top: 1rem; color: #4a4a4a; }
+  #result { margin-top: .5rem; }
+  .url { word-break: break-all; display: block; margin: .25rem 0; }
+  .error { color: #b50909; }
+  .hint { color: #4a4a4a; font-size: .92rem; }
+</style>
+</head>
+<body>
+<h1>SRU search URL from a correction title</h1>
+<p class="hint">Paste one erratum or correction notice title, for example
+<em>Correction: Effects of drought stress on maize grain yield and quality</em>. You get the NAL Alma
+production SRU searchRetrieve URL for the original article. Open it to see the matching Alma record.</p>
+<form id="f">
+  <label for="title">Correction title</label>
+  <textarea id="title" name="title" maxlength="__MAX__" required></textarea>
+  <button type="submit" id="go">Get SRU URL</button>
+</form>
+<div id="status" role="status" aria-live="polite"></div>
+<div id="result"></div>
+<p class="hint">Replies usually take 15-60 seconds. One title per request; for long lists, use the SQL
+function <code>users.amanda_xu.build_sru_url</code>. Copy URLs as they are; do not edit the encoding.</p>
+<script nonce="__NONCE__">
+(function () {
+  var PREFIX = "__PREFIX__";
+  var form = document.getElementById("f"), btn = document.getElementById("go");
+  var statusEl = document.getElementById("status"), out = document.getElementById("result");
+  function para(text, cls) { var p = document.createElement("p"); p.textContent = text; if (cls) p.className = cls; return p; }
+  form.addEventListener("submit", async function (ev) {
+    ev.preventDefault();
+    var title = document.getElementById("title").value.trim();
+    if (!title) return;
+    btn.disabled = true; out.replaceChildren(); statusEl.textContent = "Working... this usually takes 15-60 seconds.";
+    var started = Date.now(), ctrl = new AbortController(), timer = setTimeout(function () { ctrl.abort(); }, 300000);
+    try {
+      var r = await fetch("api/sru-url", { method: "POST", credentials: "same-origin", signal: ctrl.signal,
+        headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: title }) });
+      var data = null; try { data = await r.json(); } catch (e) { data = null; }
+      if (!data) { out.append(para("Your sign-in may have expired. Reload the page and try again.", "error")); return; }
+      if (!r.ok) { out.append(para(data.error || ("Request failed (HTTP " + r.status + ")."), "error")); return; }
+      var urls = (data.urls || []).filter(function (u) { return typeof u === "string" && u.indexOf(PREFIX) === 0; });
+      if (urls.length) {
+        urls.forEach(function (u) {
+          var a = document.createElement("a"); a.href = u; a.textContent = u; a.className = "url";
+          a.target = "_blank"; a.rel = "noopener noreferrer"; out.append(a);
+          var c = document.createElement("button"); c.type = "button"; c.textContent = "Copy URL";
+          c.addEventListener("click", function () { navigator.clipboard.writeText(u).then(function () { c.textContent = "Copied"; }); });
+          out.append(c);
+        });
+      } else {
+        out.append(para(data.text || "No SRU URL in the reply. Try again, or use the SQL function."));
+      }
+    } catch (e) {
+      out.append(para(e && e.name === "AbortError" ? "No reply after 5 minutes. Try again later."
+        : "Could not reach the app. Your sign-in may have expired; reload the page and try again.", "error"));
+    } finally {
+      clearTimeout(timer); btn.disabled = false;
+      statusEl.textContent = "Done in " + Math.round((Date.now() - started) / 1000) + " s.";
+    }
+  });
+})();
+</script>
+</body>
+</html>
+"""
+
+
+async def index(request: Request) -> HTMLResponse:
+    nonce = secrets.token_urlsafe(16)
+    html = (
+        PAGE.replace("__NONCE__", nonce).replace("__PREFIX__", SRU_PREFIX).replace("__MAX__", str(MAX_TITLE_CHARS))
+    )
+    return HTMLResponse(
+        html,
+        headers={
+            # only this page's own inline script and style may run; it may only call this app
+            "Content-Security-Policy": (
+                f"default-src 'none'; script-src 'nonce-{nonce}'; style-src 'nonce-{nonce}'; "
+                "connect-src 'self'; img-src 'self'; form-action 'self'; base-uri 'none'"
+            ),
+            "X-Content-Type-Options": "nosniff",
+            "Referrer-Policy": "no-referrer",
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+async def sru_url_api(request: Request) -> JSONResponse:
+    """JSON API behind the page: {"title": "..."} -> {"text": agent reply, "urls": [SRU URLs in it]}."""
+    if not request.headers.get("content-type", "").lower().startswith("application/json"):
+        # also blocks plain cross-site HTML form posts, which cannot send application/json
+        return JSONResponse({"error": "Send JSON: {\"title\": \"...\"}"}, status_code=415)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Request body must be JSON"}, status_code=400)
+    title = body.get("title") if isinstance(body, dict) else None
+    if not isinstance(title, str) or not title.strip():
+        return JSONResponse({"error": "Body must include 'title' (the correction title)"}, status_code=400)
+    if len(title) > MAX_TITLE_CHARS:
+        return JSONResponse({"error": f"Title is longer than {MAX_TITLE_CHARS} characters"}, status_code=400)
+    try:
+        text = await asyncio.to_thread(_call_agent, title.strip())
+    except UpstreamError as e:
+        log.warning("page_error error_id=%s category=%s status=%s", e.error_id, e.category, e.status_code)
+        return JSONResponse({"error": e.client_message()}, status_code=504 if e.category == "timeout" else 502)
+    except Exception as e:  # never expose unexpected exception text
+        err = UpstreamError("unavailable")
+        log.warning("page_error error_id=%s category=unexpected exception=%s", err.error_id, type(e).__name__)
+        return JSONResponse({"error": err.client_message()}, status_code=502)
+    urls = [u.rstrip(").,;") for u in _SRU_URL_RE.findall(text or "")]
+    return JSONResponse({"text": text or EMPTY_MSG, "urls": list(dict.fromkeys(urls))})
+
+
+app.add_route("/", index, methods=["GET"])
+app.add_route("/api/sru-url", sru_url_api, methods=["POST"])
 app.add_route("/health", health, methods=["GET"])
 app.add_route("/invocations", invocations, methods=["POST"])
 app.add_route("/responses", invocations, methods=["POST"])
