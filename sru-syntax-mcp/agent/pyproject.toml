@@ -1,7 +1,7 @@
 [project]
 name = "sru-syntax-agent"
 version = "0.1.0"
-description = "OpenAI Agents SDK agent that uses the sru-syntax-mcp MCP server on Databricks Apps"
+description = "OpenAI Agents SDK agent that uses the mcp-sru-syntax MCP server on Databricks Apps"
 requires-python = ">=3.11"
 dependencies = [
     "openai-agents>=0.25.0",
