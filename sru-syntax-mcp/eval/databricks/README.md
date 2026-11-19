@@ -239,8 +239,8 @@ permission plus `USE CATALOG` and `USE SCHEMA` on its parent catalog and schema.
 
 ## Testing the deployed MCP server (Inspector Gadget)
 
-[`inspector_gadget_mcp_test.py`](https://github.com/AmandaZXu-USDA/mcp-hackathon-template/blob/main/eval/databricks/inspector_gadget_mcp_test.py)
-(in the `mcp-hackathon-template` fork) checks that an external client can reach the OAuth-gated app and call its
+[`inspector_gadget_mcp_test.py`](https://github.com/AmandaZXu-USDA/mcp-hackathon-demo-sru/blob/main/eval/databricks/inspector_gadget_mcp_test.py)
+(in the `mcp-hackathon-demo-sru` fork) checks that an external client can reach the OAuth-gated app and call its
 tools. Import it as a notebook and run the cells in order. It:
 
 1. Loads the Inspector Gadget service principal's `client_id`, `client_secret` and `scopes` from the
