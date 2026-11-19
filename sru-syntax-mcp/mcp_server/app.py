@@ -34,7 +34,7 @@ _ws = WorkspaceClient()  # app service principal credentials from the Apps envir
 # Upstream bodies, headers, URLs, titles and exception text are never logged or returned to clients.
 logging.basicConfig(level=logging.INFO)
 logging.getLogger("httpx").setLevel(logging.WARNING)  # its INFO lines include request URLs
-log = logging.getLogger("sru_syntax_mcp")
+log = logging.getLogger("mcp_sru_syntax")
 
 
 class UpstreamError(Exception):
