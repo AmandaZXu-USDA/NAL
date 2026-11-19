@@ -2,6 +2,10 @@
 
 Converts erratum/correction notice titles into NAL Alma production SRU search URLs for the original article.
 
+**Librarians:** see [`LIBRARIAN_QUICKSTART.md`](LIBRARIAN_QUICKSTART.md) for the four ways to get a URL
+from a title (Supervisor Agent chat, Genie Code with the MCP tool, the app's agent endpoint, and the
+`build_sru_url` SQL function for lists), with the access each needs.
+
 This folder is a Declarative Automation Bundle with one Databricks App and one MLflow experiment.
 The workspace is at its 100-app limit, so the MCP server and the agent share the `sru-syntax-mcp` app:
 
