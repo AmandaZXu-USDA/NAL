@@ -114,6 +114,19 @@ def _call_agent(title: str) -> str:
         raise UpstreamError("bad_response", r.status_code) from None
 
 
+def _call_agent_retry_empty(title: str) -> str:
+    """Call the agent; if the reply is empty, ask once more. Empty replies come back within a few
+    seconds, so the retry costs little. In testing (2026-11-19) the 3 titles that got empty replies
+    were empty on every try, so this only helps titles whose empty reply is intermittent.
+    Errors (timeouts etc.) are not retried, so a slow failure never doubles the wait."""
+    text = _call_agent(title)
+    if not text.strip():
+        log.info("empty_agent_reply retrying=1")
+        text = _call_agent(title)
+        log.info("empty_agent_reply retry_result=%s", "ok" if text.strip() else "empty")
+    return text
+
+
 @mcp.tool(
     annotations=ToolAnnotations(
         title="Build NAL Alma SRU search URL",
@@ -132,7 +145,7 @@ async def build_sru_search_url(correction_title: str) -> str:
     Errors are returned as a short message with a stable category (timeout, unavailable, rate_limited,
     permission_denied, bad_response) and an error id for the app owner."""
     try:
-        text = await asyncio.to_thread(_call_agent, correction_title)
+        text = await asyncio.to_thread(_call_agent_retry_empty, correction_title)
     except UpstreamError as e:
         log.warning("tool_error error_id=%s category=%s status=%s", e.error_id, e.category, e.status_code)
         raise ToolError(e.client_message()) from None
@@ -346,7 +359,7 @@ async def sru_url_api(request: Request) -> JSONResponse:
     if len(title) > MAX_TITLE_CHARS:
         return JSONResponse({"error": f"Title is longer than {MAX_TITLE_CHARS} characters"}, status_code=400)
     try:
-        text = await asyncio.to_thread(_call_agent, title.strip())
+        text = await asyncio.to_thread(_call_agent_retry_empty, title.strip())
     except UpstreamError as e:
         log.warning("page_error error_id=%s category=%s status=%s", e.error_id, e.category, e.status_code)
         return JSONResponse({"error": e.client_message()}, status_code=504 if e.category == "timeout" else 502)
