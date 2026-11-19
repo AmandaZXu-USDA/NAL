@@ -16,6 +16,7 @@ from databricks.sdk import WorkspaceClient
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 from mcp.types import ToolAnnotations
+from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
@@ -138,6 +139,44 @@ async def build_sru_search_url(correction_title: str) -> str:
 
 
 app = mcp.streamable_http_app()  # serves the MCP endpoint at /mcp
+
+
+class NoGetStreamMiddleware:
+    """Answer GET /mcp with 405 right away. In stateless mode the server offers no standalone SSE stream,
+    so a GET would otherwise hang; the MCP spec allows 405 here, and clients then use POST only."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http" and scope["method"] == "GET" and scope["path"].rstrip("/") == "/mcp":
+            response = JSONResponse(
+                {"jsonrpc": "2.0", "id": None, "error": {"code": -32600, "message": "Method Not Allowed"}},
+                status_code=405,
+                headers={"Allow": "POST, DELETE"},
+            )
+            return await response(scope, receive, send)
+        return await self.app(scope, receive, send)
+
+
+def _allowed_origins() -> list[str]:
+    """The workspace URL (Genie Code calls /mcp from the browser), plus any extra in ALLOWED_ORIGINS."""
+    host = (_ws.config.host or os.environ.get("DATABRICKS_HOST", "")).rstrip("/")
+    if host and not host.startswith("http"):
+        host = f"https://{host}"
+    extra = [o.strip().rstrip("/") for o in os.environ.get("ALLOWED_ORIGINS", "").split(",") if o.strip()]
+    return [o for o in [host, *extra] if o]
+
+
+app.add_middleware(NoGetStreamMiddleware)
+app.add_middleware(  # added last, so it runs first and answers CORS preflight (OPTIONS) requests
+    CORSMiddleware,
+    allow_origins=_allowed_origins(),
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["mcp-session-id", "mcp-protocol-version"],
+)
 
 
 # ---- SRU syntax agent endpoints (same app) ----
