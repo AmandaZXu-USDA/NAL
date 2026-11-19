@@ -15,7 +15,8 @@ production SRU URL for the original article, or no URL when the notice names no 
 
 **Evaluation report:** [`doc/sru-syntax-mcp-evaluation-report.pdf`](doc/sru-syntax-mcp-evaluation-report.pdf)
 summarizes Inspector Gadget testing, this offline evaluation, online evaluation (production
-monitoring), the `kindly-lamb-651` ToolCallEfficiency run and per-step agent latency.
+monitoring), the `kindly-lamb-651` ToolCallEfficiency run, per-step agent latency, and live testing on
+November 19, 2026 (titles per minute, agent vs rules function, empty-reply retry).
 
 ## What's in this kit
 
@@ -252,6 +253,16 @@ tools. Import it as a notebook and run the cells in order. It:
    default and the tool takes 15 to 90 s.
 4. Calls every tool on the app (sample arguments in `sample_args`, placeholders for tools without an
    entry) and prints PASS, FAIL (tool returned an error) or ERROR (call failed) with timings.
+5. Tests the browser page: `GET /` without a token goes to the login page, `GET /` serves the page
+   with a per-request CSP nonce, a plain form post to `/api/sru-url` is refused (415), and
+   `POST /api/sru-url` returns one SRU URL.
+6. **142-title MCP test** (last 3 cells): reads the Sample3 workbook from
+   `/Volumes/users/amanda_xu/erratum_files/`, gets each expected URL from `users.amanda_xu.build_sru_url`,
+   calls `build_sru_search_url` for every title (10 at a time, about 8 minutes), classifies each reply
+   (`EXACT`, `EMPTY_AGENT_REPLY`, `BARE_NOTICE_NO_URL`, `CORRECT_URL_EXTRA_TEXT`, `WRONG_URL`, `ERROR`) and
+   appends the results with a `run_id` to `users.amanda_xu.sample3_mcp_offline_test`.
+
+The same notebook is in this folder as `nb-apps-mcp-testing-amandaxu.py`.
 
 Required permissions:
 
@@ -266,6 +277,44 @@ Required permissions:
 | `ExceptionGroup` / `UnsupportedProtocol`, app logs show 401 | The service principal lacks `CAN USE` on the app. |
 | Tool error `bad_response` | The app's service principal cannot run the UC function the Supervisor Agent calls. |
 | `ReadTimeout` | The default 5 s client timeout; use `call_tool_with_timeout`. |
+
+### Results on November 19, 2026
+
+After the browser page and the empty-reply retry were deployed (section 6 of the evaluation report).
+
+**Routes, as Inspector Gadget:** `GET /` without a token 302 to login; `GET /health` 200; `GET /` 200 with
+a CSP nonce; `POST /api/sru-url` 200 with the correct URL (55 s first call, then 16 s and 20 s); form post 415;
+MCP `tools/list` and `tools/call` 200 (14 s); `/invocations` 200 (21 s). The new page-test cell: 4/4 PASS.
+
+**Titles per minute:**
+
+| How titles were sent | Titles | At a time | Per-title time | Titles per minute |
+|---|---|---|---|---|
+| MCP tool (142-title test) | 142 | 10 | median 27.0 s, p90 58.2 s, max 70.4 s | about 18 at most (run took at least 7.8 min) |
+| Supervisor Agent endpoint directly | 41 | 4 | median 15 s, p90 52 s, max 55 s | 10.6 (231 s) |
+| MCP tool or page, one at a time | - | 1 | 14-21 s; 46-55 s for the first call after idle | about 3-4 |
+| Rules function via the SQL Statement API | 41 | 1 | 3.3-3.6 s; 36 s for the first call | about 17 |
+
+The 142-title run's total time was not recorded; its per-title times add up to 4,706 s across 10 parallel
+calls, so about 18 a minute is an upper bound.
+
+**Agent vs rules function:**
+
+| Dataset | Agent | Rules function |
+|---|---|---|
+| 41 eval titles, agent called directly | Same URL on 30/33 article titles; 3 empty replies; 0 different URLs; no URL for 8/8 bare or issue-level notices | 41/41 |
+| 142 Sample3 titles via the MCP tool | 130 exact; 7 empty replies; 4 bare notices with no URL; 1 correct URL with extra text; 0 wrong URLs | 142/142 |
+
+The expected values come from the rules function, so its 100% shows only that it has not changed; the
+useful result is that every URL the agent returned was the function's. The function was timed through the
+SQL Statement API, not through MCP (the MCP tool always calls the agent). The agent-only path is kept for the
+demo.
+
+**Empty-reply retry:** the MCP tool and the page now ask the agent once more when its reply is empty; errors
+are not retried. It recovered **0 of 10** titles that got empty replies: the 3 from the 41-row dataset were
+empty on 9/9 extra calls before deploying and again after, and the 7 from the 142-title run were all still
+empty through the deployed tool (7 retries in the app logs, all empty). Each empty reply now takes about
+2-3 s longer. For these titles, use the rules function.
 
 ## Troubleshooting
 
