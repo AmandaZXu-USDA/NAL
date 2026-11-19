@@ -236,6 +236,36 @@ permission plus `USE CATALOG` and `USE SCHEMA` on its parent catalog and schema.
 | When it runs | On demand (run the notebook) | Continuously when scorers are started (sample rate > 0) |
 | Cost | ~7 minutes per run, 41 traces, 5 scorers | Per-trace LLM judge calls at the configured sample rate |
 
+## Testing the deployed MCP server (Inspector Gadget)
+
+[`inspector_gadget_mcp_test.py`](https://github.com/AmandaZXu-USDA/mcp-hackathon-template/blob/main/eval/databricks/inspector_gadget_mcp_test.py)
+(in the `mcp-hackathon-template` fork) checks that an external client can reach the OAuth-gated app and call its
+tools. Import it as a notebook and run the cells in order. It:
+
+1. Loads the Inspector Gadget service principal's `client_id`, `client_secret` and `scopes` from the
+   Unity Catalog secret `models.ai/inspector-gadget` (no credentials are stored in the file).
+2. Builds a `WorkspaceClient` against the **workspace** URL (not the app URL; OAuth M2M needs the
+   workspace to issue its token) and lists the app's tools with `DatabricksMCPClient`.
+3. Calls `build_sru_search_url` on a sample title. The call opens the MCP session with an
+   `httpx2.AsyncClient` and a 300 s timeout, because `DatabricksMCPClient.call_tool` uses the 5 s httpx
+   default and the tool takes 15 to 90 s.
+4. Calls every tool on the app (sample arguments in `sample_args`, placeholders for tools without an
+   entry) and prints PASS, FAIL (tool returned an error) or ERROR (call failed) with timings.
+
+Required permissions:
+
+| Principal | Needs |
+|---|---|
+| Inspector Gadget service principal | `CAN USE` on the `sru-syntax-mcp` app |
+| The app's own service principal | `CAN QUERY` on `mas-c8629507-endpoint`, `EXECUTE` on `users.amanda_xu.build_sru_url`, `USE SCHEMA` on `users.amanda_xu` |
+
+| Symptom | Cause |
+|---|---|
+| `oauth-m2m: Invalid URL 'None'` | `WorkspaceClient` host is the app URL; use the workspace URL. |
+| `ExceptionGroup` / `UnsupportedProtocol`, app logs show 401 | The service principal lacks `CAN USE` on the app. |
+| Tool error `bad_response` | The app's service principal cannot run the UC function the Supervisor Agent calls. |
+| `ReadTimeout` | The default 5 s client timeout; use `call_tool_with_timeout`. |
+
 ## Troubleshooting
 
 | Symptom | Cause / fix |
