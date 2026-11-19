@@ -78,7 +78,7 @@ async def run_agent(messages: list[dict] | str) -> str:
     # Connect to the local MCP server for this request; leaving the block closes the connection
     async with MCPServerStreamableHttp(
         params={"url": LOCAL_MCP_URL, "timeout": MCP_TIMEOUT_S, "sse_read_timeout": MCP_TIMEOUT_S},
-        name="sru-syntax-mcp",
+        name="mcp-sru-syntax",
         client_session_timeout_seconds=MCP_TIMEOUT_S,
     ) as mcp_server:
         agent = Agent(

@@ -1,4 +1,4 @@
-"""SRU syntax agent: an OpenAI Agents SDK agent that calls the sru-syntax-mcp MCP server
+"""SRU syntax agent: an OpenAI Agents SDK agent that calls the mcp-sru-syntax MCP server
 (a Databricks App) to turn erratum/correction notice titles into NAL Alma SRU search URLs.
 """
 import os
@@ -25,7 +25,7 @@ MODEL_SERVICE = os.getenv("MODEL_SERVICE")
 mlflow.set_experiment(experiment_id=os.getenv("MLFLOW_EXPERIMENT_ID"))
 
 # MCP server app: an app name (from the app resource) or a full https URL
-MCP_SERVER_APP = os.getenv("MCP_SERVER_APP", "sru-syntax-mcp")
+MCP_SERVER_APP = os.getenv("MCP_SERVER_APP", "mcp-sru-syntax")
 # The agent-sru-syntax endpoint can take 60-90 seconds per title, so allow a long timeout
 MCP_TIMEOUT_S = float(os.getenv("MCP_TIMEOUT_SECONDS", "300"))
 
@@ -76,7 +76,7 @@ def preprocess(messages: list[dict] | str) -> list[dict]:
 
 @mlflow.trace(name="sru_syntax_agent_run", span_type="AGENT")
 async def run_agent(messages: list[dict] | str) -> str:
-    """Run the agent with the sru-syntax-mcp tools and return the final reply."""
+    """Run the agent with the mcp-sru-syntax tools and return the final reply."""
     mlflow.update_current_trace(tags={"agent_name": "SRU Syntax Agent", "model_service": MODEL_SERVICE})
 
     # Custom span: trace our own preprocessing in the same trace
@@ -87,7 +87,7 @@ async def run_agent(messages: list[dict] | str) -> str:
 
     # Connect to the MCP server for this request; leaving the block closes the connection
     async with McpServer(
-        url=mcp_url(), workspace_client=ws, name="sru-syntax-mcp", timeout=MCP_TIMEOUT_S
+        url=mcp_url(), workspace_client=ws, name="mcp-sru-syntax", timeout=MCP_TIMEOUT_S
     ) as mcp_server:
         agent = Agent(
             name="SRU Syntax Agent",

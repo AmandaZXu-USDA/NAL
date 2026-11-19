@@ -7,7 +7,7 @@ from a title (Supervisor Agent chat, Genie Code with the MCP tool, the app's age
 `build_sru_url` SQL function for lists), with the access each needs.
 
 This folder is a Declarative Automation Bundle with one Databricks App and one MLflow experiment.
-The workspace is at its 100-app limit, so the MCP server and the agent share the `sru-syntax-mcp` app:
+The workspace is at its 100-app limit, so the MCP server and the agent share the `mcp-sru-syntax` app:
 
 | Endpoint | Code | What it does |
 | --- | --- | --- |
@@ -47,8 +47,8 @@ Run from this folder (the bundle root):
 ```bash
 databricks bundle validate --strict -t dev
 
-# One time: the sru-syntax-mcp app already exists, so let the bundle manage it
-databricks bundle deployment bind sru_syntax_mcp sru-syntax-mcp -t dev
+# One time: the mcp-sru-syntax app already exists, so let the bundle manage it
+databricks bundle deployment bind sru_syntax_mcp mcp-sru-syntax -t dev
 
 databricks bundle deploy -t dev
 databricks bundle run sru_syntax_mcp -t dev
@@ -59,7 +59,7 @@ Override any variable with `--var`, for example `--var model_service=models.ai.g
 ## Test the agent
 
 ```bash
-curl -X POST "https://sru-syntax-mcp-7474654188777746.aws.databricksapps.com/invocations" \
+curl -X POST "https://mcp-sru-syntax-7474654188777746.aws.databricksapps.com/invocations" \
   -H "Authorization: Bearer <OAUTH_TOKEN>" -H "Content-Type: application/json" \
   -d '{"input": [{"role": "user", "content": "Correction: <article title>"}]}'
 ```

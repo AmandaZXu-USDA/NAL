@@ -107,7 +107,7 @@ https://nal.alma.exlibrisgroup.com/view/sru/01NAL_INST?version=1.2&operation=sea
 | --- | --- |
 | Unity Catalog function `users.amanda_xu.build_sru_url(correction_title)` | Python UDF with the Part 1 rules. Deterministic; the source of truth for SRU URLs. Use it for bulk processing in SQL. |
 | Supervisor Agent `agent-sru-syntax` (endpoint `mas-c8629507-endpoint`) | Agent Bricks agent that calls the function as a tool. |
-| Databricks App `sru-syntax-mcp` | Custom MCP server with one read-only tool, `build_sru_search_url`, that calls the Supervisor Agent. The same app serves an OpenAI Agents SDK agent at `/invocations` that uses the tool. See [`sru-syntax-mcp/README.md`](sru-syntax-mcp/README.md). |
+| Databricks App `mcp-sru-syntax` | Custom MCP server with one read-only tool, `build_sru_search_url`, that calls the Supervisor Agent. The same app serves an OpenAI Agents SDK agent at `/invocations` that uses the tool. See [`sru-syntax-mcp/README.md`](sru-syntax-mcp/README.md). |
 | Agent skill `agent-sru-syntax` | Instructions and rules for coding agents working on this project ([`SKILL.md`](sru-syntax-mcp/.agents/skills/agent-sru-syntax/SKILL.md)). |
 | Offline evaluation | MLflow GenAI evaluation over 41 labelled notices ([`sru-syntax-mcp/eval/databricks/`](sru-syntax-mcp/eval/databricks/README.md)). |
 
@@ -154,9 +154,9 @@ Tool names are the function's full name with `__` in place of dots. The schema-l
 `build_sru_url_v1`, an older version, so use the function-level URL to expose only the current function.
 The first call can time out while the function warms up; retry once.
 
-**2. Custom MCP server on Databricks Apps (`sru-syntax-mcp`).** Managed MCP has no endpoint for
+**2. Custom MCP server on Databricks Apps (`mcp-sru-syntax`).** Managed MCP has no endpoint for
 Supervisor Agents, so the app wraps the agent in an MCP tool:
-`https://sru-syntax-mcp-7474654188777746.aws.databricksapps.com/mcp`. Databricks Apps require an OAuth token;
+`https://mcp-sru-syntax-7474654188777746.aws.databricksapps.com/mcp`. Databricks Apps require an OAuth token;
 personal access tokens are rejected.
 
 ### Governance

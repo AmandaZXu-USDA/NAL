@@ -67,7 +67,7 @@ def _category_for_status(status: int) -> str:
     return "unavailable"
 
 mcp = FastMCP(
-    "sru-syntax-mcp",
+    "mcp-sru-syntax",
     instructions="Converts erratum/correction notice titles into NAL Alma production SRU search URLs "
     "for the original article, using the agent-sru-syntax agent.",
     host="0.0.0.0",  # behind the Apps proxy; avoids localhost-only Host-header checks
