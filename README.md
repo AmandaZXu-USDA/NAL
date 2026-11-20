@@ -169,8 +169,10 @@ personal access tokens are rejected.
 * **Tracing in Unity Catalog.** MLflow traces every agent, model and tool call into
   `users.amanda_xu.sru_syntax_agent_otel_*` tables, so traces are governed and queryable like any other table.
 * **Safe tool behaviour.** The MCP tool is annotated read-only and idempotent, and returns stable error
-  categories (`timeout`, `unavailable`, `rate_limited`, `permission_denied`, `bad_response`) with an error ID
-  instead of upstream error bodies.
+  categories (`invalid_input`, `timeout`, `unavailable`, `rate_limited`, `permission_denied`, `not_found`,
+  `bad_request`, `bad_response`, `empty_reply`, `internal`) with an error ID instead of upstream error bodies.
+  An empty reply, a busy agent or a temporary outage is retried once; an empty reply after the retry returns
+  `empty_reply`, which points to the SQL function for that title.
 * **Evaluation.** An offline MLflow evaluation checks URLs deterministically against the Unity Catalog
   function, plus LLM judges for correctness, relevance, safety and "no invented URLs".
 
