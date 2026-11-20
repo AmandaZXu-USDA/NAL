@@ -24,5 +24,6 @@ Deploy `mcp_server/` as a Databricks App named `mcp-erratum-note`. The app's ser
 the volume in `SRU_VOLUME_DIR`. The Supervisor Agent `agent-erratum-annotator` uses this MCP app plus the UC
 function `users.amanda_xu.process_sru_response`.
 
-The deployed app currently runs from `/Workspace/Users/amanda.xu@usda.gov/erratum-annotator`; this folder is a copy
-of that source as of November 20, 2026.
+The deployed app runs from this repo folder: `/Workspace/Users/amanda.xu@usda.gov/NAL/erratum-annotator/mcp_server`
+(snapshot deployment, November 20, 2026). Redeploy after pulling changes:
+`databricks apps deploy mcp-erratum-note --source-code-path <repo>/erratum-annotator/mcp_server`.
