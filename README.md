@@ -402,12 +402,18 @@ The agent uses the Databricks-hosted model endpoint `databricks-gpt-5-6-luna` (`
 
 ### App resources
 
-The app gets these through `valueFrom` in [`sru-syntax-mcp/mcp_server/app.yaml`](sru-syntax-mcp/mcp_server/app.yaml):
+The bundle ([`sru-syntax-mcp/databricks.yml`](sru-syntax-mcp/databricks.yml)) declares these app resources, and the app's service principal gets each permission.
+Three of them reach the app as environment variables through `valueFrom` in [`sru-syntax-mcp/mcp_server/app.yaml`](sru-syntax-mcp/mcp_server/app.yaml); the others are
+permission grants only.
 
-* `serving-endpoint` -> `SERVING_ENDPOINT`: Supervisor Agent endpoint, `CAN_QUERY`
-* `model-service` -> `MODEL_SERVICE`: Unity Gateway model service (default `models.ai.gpt-5-6-luna`), `EXECUTE`
-* `app-experiment` -> `MLFLOW_EXPERIMENT_ID`: Unity Catalog-backed experiment, `CAN_EDIT`
-* `trace-annotations`, `trace-logs`, `trace-metrics`, `trace-spans`: the four `users.amanda_xu.sru_syntax_agent_otel_*` tables, `MODIFY` (includes `SELECT`)
+| Resource | Permission | Environment variable |
+| --- | --- | --- |
+| `serving-endpoint`: Supervisor Agent endpoint | `CAN_QUERY` | `SERVING_ENDPOINT` (`valueFrom`) |
+| `model-service`: Unity Gateway model service (default `models.ai.gpt-5-6-luna`) | `EXECUTE` | `MODEL_SERVICE` (`valueFrom`) |
+| `app-experiment`: Unity Catalog-backed experiment | `CAN_EDIT` | `MLFLOW_EXPERIMENT_ID` (`valueFrom`) |
+| `sql-warehouse`: the warehouse that runs `build_sru_url` | `CAN_USE` | `SQL_WAREHOUSE_ID`, set as a plain value in `app.yaml` |
+| `sru-function`: `users.amanda_xu.build_sru_url` | `EXECUTE` | none |
+| `trace-annotations`, `trace-logs`, `trace-metrics`, `trace-spans`: the four `users.amanda_xu.sru_syntax_agent_otel_*` tables | `MODIFY` (includes `SELECT`) | none; MLflow writes traces through the experiment |
 
 ### Governance
 
