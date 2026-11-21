@@ -13,6 +13,28 @@ This project is the initial stage of automating that workflow:
 2. **Part 2, agents, MCP and governance on Databricks:** make the same logic available to people and AI
    agents as a governed Unity Catalog function, a Supervisor Agent and an MCP server, with tracing and
    evaluation.
+3. **Part 3, erratum annotation:** from the SRU response, find the original article's record and append an
+   erratum note to its title, with a second MCP server and agent ([`erratum-annotator/`](erratum-annotator/README.md)).
+
+## At a glance: two MCP apps, two agents
+
+| | Project 1: SRU syntax (Parts 1 and 2) | Project 2: Erratum annotator (Part 3) |
+| --- | --- | --- |
+| What it does | Correction notice title -> NAL Alma SRU search URL | SRU response (MODS XML) -> original title with `[Erratum: ...]` note |
+| MCP server (Databricks App) | `mcp-sru-syntax`: 1 tool, `build_sru_search_url` | `mcp-erratum-note`: 7 tools, e.g. `list_sru_files`, `process_sru_file` |
+| Agent | Supervisor Agent `agent-sru-syntax` (`mas-c8629507-endpoint`); the app also serves an OpenAI Agents SDK agent at `/invocations` | Supervisor Agent `agent-erratum-annotator` (`mas-c341c0aa-endpoint`), [configuration](erratum-annotator/agent/README.md) |
+| Deterministic rules | UC function `users.amanda_xu.build_sru_url` | UC function `users.amanda_xu.process_sru_response` |
+| Code | [`sru-syntax-mcp/`](sru-syntax-mcp/README.md) | [`erratum-annotator/`](erratum-annotator/README.md) |
+| Evaluation | [`sru-syntax-mcp/eval/databricks/`](sru-syntax-mcp/eval/databricks/README.md) | [`erratum-annotator/eval/databricks/`](erratum-annotator/eval/databricks/README.md) |
+| Headline result | 135/142 correct replies via MCP, 0 wrong URLs | Agent: 50/53 exact annotated titles; MCP server alone: 0 errors, 48/48 original MMS IDs |
+| Deploy | Declarative Automation Bundle `sru_syntax` in `sru-syntax-mcp/` | `databricks apps deploy` from `erratum-annotator/mcp_server` |
+
+Both live apps are deployed from this repository. The hackathon copy for judges,
+[`AmandaZXu-USDA/mcp-hackathon-demo-sru`](https://github.com/AmandaZXu-USDA/mcp-hackathon-demo-sru), mirrors
+both projects (Project 1 in the GSA template layout, Project 2 byte-identical in `erratum-annotator/`); make
+changes here first, then copy them. The deck and both reports are in [`submission/`](submission/README.md).
+Safe-deployment rules for each app: [`sru-syntax-mcp/README.md`](sru-syntax-mcp/README.md) and
+[`erratum-annotator/README.md`](erratum-annotator/README.md#deploying-safely).
 
 ```
 Correction notice title
@@ -33,6 +55,8 @@ https://nal.alma.exlibrisgroup.com/view/sru/01NAL_INST?version=1.2&operation=sea
 | --- | --- |
 | [`title-extraction/`](title-extraction/README.md) | Part 1: `erratum_title_extractor.py`, the spreadsheet processing script. |
 | [`sru-syntax-mcp/`](sru-syntax-mcp/README.md) | Part 2: MCP server and agent (Databricks App), bundle config, agent skill, offline evaluation. |
+| [`erratum-annotator/`](erratum-annotator/README.md) | Part 3: MCP server `mcp-erratum-note`, agent `agent-erratum-annotator` configuration, evaluation, Inspector Gadget test and report. |
+| [`submission/`](submission/README.md) | Hackathon deck, both evaluation reports and the librarian quick-start (same files as the hackathon repo). |
 | [`mcp-hackathon/`](mcp-hackathon/README.md) | The GSA MCP Hackathon server template this project started from (FastMCP, deploy kits, eval templates). |
 
 ## Part 1: Spreadsheet processing
