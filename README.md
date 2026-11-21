@@ -25,7 +25,7 @@ This project is the initial stage of automating that workflow:
 | Agent | Supervisor Agent `agent-sru-syntax` (`mas-c8629507-endpoint`); the app also serves an OpenAI Agents SDK agent at `/invocations` | Supervisor Agent `agent-erratum-annotator` (`mas-c341c0aa-endpoint`), [configuration](erratum-annotator/agent/README.md) |
 | Deterministic rules | UC function `users.amanda_xu.build_sru_url` | UC function `users.amanda_xu.process_sru_response` |
 | Code | [`sru-syntax-mcp/`](sru-syntax-mcp/README.md) | [`erratum-annotator/`](erratum-annotator/README.md) |
-| Evaluation | [`sru-syntax-mcp/eval/databricks/`](sru-syntax-mcp/eval/databricks/README.md) | [`erratum-annotator/eval/databricks/`](erratum-annotator/eval/databricks/README.md) |
+| Evaluation | [`sru-syntax-mcp/eval/databricks/`](sru-syntax-mcp/eval/databricks/README.md), [report PDF](submission/sru-syntax-mcp-evaluation-report.pdf) | [`erratum-annotator/eval/databricks/`](erratum-annotator/eval/databricks/README.md), [report PDF](erratum-annotator/eval/databricks/doc/agent-erratum-annotator-evaluation-report.pdf) |
 | Headline result | 135/142 correct replies via MCP, 0 wrong URLs | Agent: 50/53 exact annotated titles; MCP server alone: 0 errors, 48/48 original MMS IDs |
 | Deploy | Declarative Automation Bundle `sru_syntax` in `sru-syntax-mcp/` | `databricks apps deploy` from `erratum-annotator/mcp_server` |
 
@@ -33,7 +33,7 @@ Both live apps are deployed from this repository. The hackathon copy for judges,
 [`AmandaZXu-USDA/mcp-hackathon-demo-sru`](https://github.com/AmandaZXu-USDA/mcp-hackathon-demo-sru), mirrors
 both projects (Project 1 in the GSA template layout, Project 2 byte-identical in `erratum-annotator/`); make
 changes here first, then copy them. The deck and both reports are in [`submission/`](submission/README.md).
-Safe-deployment rules for each app: [`sru-syntax-mcp/README.md`](sru-syntax-mcp/README.md) and
+See [Deploying the two apps safely](#deploying-the-two-apps-safely); app details: [`sru-syntax-mcp/README.md`](sru-syntax-mcp/README.md) and
 [`erratum-annotator/README.md`](erratum-annotator/README.md#deploying-safely).
 
 ```
@@ -207,7 +207,7 @@ flowchart LR
 | Folder | What it is |
 | --- | --- |
 | [`title-extraction/`](title-extraction/README.md) | Part 1: `erratum_title_extractor.py`, the spreadsheet processing script. |
-| [`sru-syntax-mcp/`](sru-syntax-mcp/README.md) | Part 2: MCP server and agent (Databricks App), UC function `build_sru_url` (`uc_functions/`), bundle config, agent skill, offline evaluation. Tools and functions: [`deploy/databricks/README.md`](sru-syntax-mcp/deploy/databricks/README.md#tools-and-functions). |
+| [`sru-syntax-mcp/`](sru-syntax-mcp/README.md) | Part 2: MCP server and agent (Databricks App), UC function `build_sru_url` (`uc_functions/`), bundle config, agent skill, offline evaluation. Tools and functions: [`sru-syntax-mcp/deploy/databricks/README.md`](sru-syntax-mcp/deploy/databricks/README.md#tools-and-functions). |
 | [`erratum-annotator/`](erratum-annotator/README.md) | Part 3: MCP server `mcp-erratum-note`, UC functions (`uc_functions/`), agent `agent-erratum-annotator` configuration, evaluation, Inspector Gadget test and report. Tools and functions: [`README.md`](erratum-annotator/README.md#mcp-tools). |
 | [`submission/`](submission/README.md) | Hackathon deck, both evaluation reports and the librarian quick-start (same files as the hackathon repo). |
 | [`mcp-hackathon/`](mcp-hackathon/README.md) | The GSA MCP Hackathon server template this project started from (FastMCP, deploy kits, eval templates). |
@@ -291,14 +291,38 @@ https://nal.alma.exlibrisgroup.com/view/sru/01NAL_INST?version=1.2&operation=sea
 | --- | --- |
 | Unity Catalog function `users.amanda_xu.build_sru_url(correction_title)` | Python UDF with the Part 1 rules. Deterministic; the source of truth for SRU URLs. Use it for bulk processing in SQL. |
 | Supervisor Agent `agent-sru-syntax` (endpoint `mas-c8629507-endpoint`) | Agent Bricks agent that calls the function as a tool. |
-| Databricks App `mcp-sru-syntax` | Custom MCP server with one read-only tool, `build_sru_search_url`, that runs the function on a SQL warehouse first (about 4 s) and asks the Supervisor Agent only if that call fails. The same app serves an OpenAI Agents SDK agent at `/invocations` that uses the tool. See [`sru-syntax-mcp/README.md`](sru-syntax-mcp/README.md). |
+| Databricks App `mcp-sru-syntax` | Custom MCP server with one read-only tool, `build_sru_search_url`, that runs the function on a SQL warehouse first (about 4 s) and asks the Supervisor Agent only if that call fails. The same app serves an OpenAI Agents SDK agent at `/invocations` that uses the tool. See [`sru-syntax-mcp/deploy/databricks/README.md`](sru-syntax-mcp/deploy/databricks/README.md). |
 | Agent skill `agent-sru-syntax` | Instructions and rules for coding agents working on this project ([`SKILL.md`](sru-syntax-mcp/.agents/skills/agent-sru-syntax/SKILL.md)). |
-| Offline evaluation | MLflow GenAI evaluation over 41 labelled notices ([`sru-syntax-mcp/eval/databricks/`](sru-syntax-mcp/eval/databricks/README.md)). |
+| Offline evaluation | MLflow GenAI evaluation over labelled notices ([`sru-syntax-mcp/eval/databricks/`](sru-syntax-mcp/eval/databricks/README.md)). |
 
 For bulk work, call the function from SQL. The MCP tool and the browser page answer in about 4 seconds
 per title (live test 2026-11-21: 3.9-4.7 s), because they run the function first; the Supervisor Agent
 (about 20 seconds per title) is only the fallback. Either way they suit interactive use rather than
 thousands of rows.
+
+### The MCP server (`sru-syntax-mcp/mcp_server/`)
+
+The server is built on MCP 1.x (`mcp.server.fastmcp`) and serves stateless streamable-HTTP. The workspace
+is at its 100-app limit, so the MCP server and the agent share the `mcp-sru-syntax` app:
+
+| Endpoint | Code | What it does |
+| --- | --- | --- |
+| `/mcp` | `sru-syntax-mcp/mcp_server/app.py` | MCP server (streamable HTTP) with one tool, `build_sru_search_url`: runs `users.amanda_xu.build_sru_url` on a SQL warehouse first (about 4 s) and falls back to the agent-sru-syntax Supervisor Agent endpoint `mas-c8629507-endpoint` |
+| `POST /invocations`, `POST /responses` | `sru-syntax-mcp/mcp_server/agent.py` | OpenAI Agents SDK agent that uses the `/mcp` tool over localhost |
+| `GET /health` | `sru-syntax-mcp/mcp_server/app.py` | Liveness check |
+
+The tool implementation is `build_sru_search_url` in [`sru-syntax-mcp/mcp_server/app.py`](sru-syntax-mcp/mcp_server/app.py)
+(the hackathon repo has the same logic split into `src/sru_server/tools/build_sru_url.py`).
+It runs the governed function `users.amanda_xu.build_sru_url` on the SQL warehouse in `SQL_WAREHOUSE_ID`
+first (title as a bound parameter; about 4 s). If the function finds no single original article, the tool
+says so at once. Only if the function call fails does it send the title to the Supervisor Agent. It returns
+the SRU URL and handles agent errors with stable
+categories (`invalid_input`, `timeout`, `unavailable`, `rate_limited`, `permission_denied`, `not_found`,
+`bad_request`, `bad_response`, `empty_reply`, `internal`) and an error ID instead of leaking upstream response
+bodies. Each message says what to do next. An empty reply, a busy agent (429) or a temporary outage
+(502/503, connection error) is retried once, after the agent's Retry-After or 2 s (at most 10 s); timeouts and
+permission or configuration errors are not retried. If the reply is still empty after the retry, the tool
+returns the `empty_reply` error, which points to the SQL function for that title.
 
 ### Two ways to reach the logic over MCP
 
@@ -343,7 +367,47 @@ The first call can time out while the function warms up; retry once.
 **2. Custom MCP server on Databricks Apps (`mcp-sru-syntax`).** Managed MCP has no endpoint for
 Supervisor Agents, so the app wraps the agent in an MCP tool:
 `https://mcp-sru-syntax-7474654188777746.aws.databricksapps.com/mcp`. Databricks Apps require an OAuth token;
-personal access tokens are rejected.
+personal access tokens are rejected. See [`sru-syntax-mcp/deploy/databricks/README.md`](sru-syntax-mcp/deploy/databricks/README.md) for
+full deployment instructions.
+
+### Deploy
+
+Run from `sru-syntax-mcp/` (the bundle root):
+
+```bash
+databricks bundle validate --strict -t dev
+
+# Only if this bundle does not track the app yet (e.g. a different user or a fresh bundle state):
+# the mcp-sru-syntax app already exists, so bind it instead of creating it
+databricks bundle deployment bind sru_syntax_mcp mcp-sru-syntax -t dev
+
+databricks bundle deploy -t dev
+databricks bundle run sru_syntax_mcp -t dev
+```
+
+Override any variable with `--var`, for example `--var model_service=models.ai.gpt-5-6-sol`.
+
+### Test the agent
+
+```bash
+curl -X POST "https://mcp-sru-syntax-7474654188777746.aws.databricksapps.com/invocations" \\
+  -H "Authorization: Bearer <OAUTH_TOKEN>" -H "Content-Type: application/json" \\
+  -d '{"input": [{"role": "user", "content": "Correction: <article title>"}]}'
+```
+
+Apps require an OAuth token (`databricks auth token`); personal access tokens are not accepted.
+The tool itself answers in about 4 seconds (SQL function first); with the agent's own model calls a title
+takes about 7-10 seconds (live test 2026-11-21: 6.6-10.1 s), and a bare or issue-level notice about 1 second.
+The agent uses the Databricks-hosted model endpoint `databricks-gpt-5-6-luna` (`AGENT_MODEL` in `app.yaml`).
+
+### App resources
+
+The app gets these through `valueFrom` in [`sru-syntax-mcp/mcp_server/app.yaml`](sru-syntax-mcp/mcp_server/app.yaml):
+
+* `serving-endpoint` -> `SERVING_ENDPOINT`: Supervisor Agent endpoint, `CAN_QUERY`
+* `model-service` -> `MODEL_SERVICE`: Unity Gateway model service (default `models.ai.gpt-5-6-luna`), `EXECUTE`
+* `app-experiment` -> `MLFLOW_EXPERIMENT_ID`: Unity Catalog-backed experiment, `CAN_EDIT`
+* `trace-annotations`, `trace-logs`, `trace-metrics`, `trace-spans`: the four `users.amanda_xu.sru_syntax_agent_otel_*` tables, `MODIFY` (includes `SELECT`)
 
 ### Governance
 
@@ -355,12 +419,78 @@ personal access tokens are rejected.
 * **Tracing in Unity Catalog.** MLflow traces every agent, model and tool call into
   `users.amanda_xu.sru_syntax_agent_otel_*` tables, so traces are governed and queryable like any other table.
 * **Safe tool behaviour.** The MCP tool is annotated read-only and idempotent, and returns stable error
-  categories (`invalid_input`, `timeout`, `unavailable`, `rate_limited`, `permission_denied`, `not_found`,
-  `bad_request`, `bad_response`, `empty_reply`, `internal`) with an error ID instead of upstream error bodies.
-  An empty reply, a busy agent or a temporary outage is retried once; an empty reply after the retry returns
-  `empty_reply`, which points to the SQL function for that title.
-* **Evaluation.** An offline MLflow evaluation checks URLs deterministically against the Unity Catalog
-  function, plus LLM judges for correctness, relevance, safety and "no invented URLs".
+  categories with an error ID instead of upstream error bodies. The outbound HTTP call uses
+  `allow_redirects=False` to prevent SSRF via redirects.
+* **Evaluation.** Offline MLflow GenAI evaluation checks URLs and agent behaviour over 41 labelled
+  notices (5 scorers: `sru_url_match`, `correctness`, `relevant_to_notice`, `no_invented_urls`, `safety`).
+  Online monitoring uses two registered custom scorers (`ToolCallEfficiency`, `ToolCallCorrectness`)
+  that score live traces automatically when started. Both are currently stopped (0% sample rate).
+  See [`sru-syntax-mcp/eval/databricks/`](sru-syntax-mcp/eval/databricks/README.md) and the
+  [`sru-syntax-mcp/eval/databricks/doc/`](sru-syntax-mcp/eval/databricks/doc/) evaluation document.
+
+### Tracing
+
+`mlflow.openai.autolog()` traces every model and MCP tool call automatically. `run_agent` adds an
+`AGENT` span plus a `preprocessing` child span.
+
+Traces are stored in Unity Catalog under `users.amanda_xu`:
+
+* `sru_syntax_agent_otel_spans`, `_otel_logs`, `_otel_metrics`, `_otel_annotations` (tables)
+* `sru_syntax_agent_trace_unified`, `sru_syntax_agent_trace_metadata` (views)
+
+[`sru-syntax-mcp/setup/create_uc_backed_experiment.py`](sru-syntax-mcp/setup/create_uc_backed_experiment.py) created the experiment and
+tables (already run once). To use a different location, run it with new names and set
+`trace_experiment_id` / `trace_table_prefix` in [`sru-syntax-mcp/databricks.yml`](sru-syntax-mcp/databricks.yml).
+
+## Part 3: Erratum annotation
+
+Once the SRU search returns the original article and its correction notice, [`erratum-annotator/`](erratum-annotator/README.md)
+picks the original record (cited DOI first, then title similarity), builds the erratum note from the correction
+record and appends it to the original title, for example
+`<original title> [Erratum: Aug. 2026, v. 52, no. 4, 134, 10.1007/s10695-026-01767-0]`. Titles that already carry
+a note are returned unchanged; uncertain matches are flagged `needs_review`.
+
+* **MCP server `mcp-erratum-note`** ([`erratum-annotator/mcp_server/`](erratum-annotator/mcp_server/)): 7 read-only
+  tools; `process_sru_file` reads saved SRU responses from a Unity Catalog volume.
+* **Agent `agent-erratum-annotator`**: Supervisor Agent with the MCP server and the UC function
+  `process_sru_response` (generated from the same Python file) as tools.
+* **Evaluation** ([`erratum-annotator/eval/databricks/`](erratum-annotator/eval/databricks/README.md)): MLflow
+  evaluation of the agent on the 53-row Sample1 set (annotated_title_exact 50/53, erratum_note_exact 52/53,
+  original MMS ID 45/46) and a direct Inspector Gadget test of the MCP server (48 files, 0 errors, 46/48 titles
+  with the 2 expected differences, 48/48 MMS IDs, median 0.28 s per call).
+
+The live `mcp-erratum-note` app is deployed from this folder; the hackathon repo keeps a byte-identical copy.
+
+## Deploying the two apps safely
+
+The two projects deploy independently: neither deploy touches the other app, agent or permissions.
+
+| | `mcp-sru-syntax` | `mcp-erratum-note` |
+| --- | --- | --- |
+| How | Bundle `sru_syntax` from `sru-syntax-mcp/` (see [Deploy](#deploy)) | `databricks apps deploy mcp-erratum-note --source-code-path <repo>/erratum-annotator/mcp_server` |
+| App service principal gets | `CAN_QUERY` on `mas-c8629507-endpoint`, `EXECUTE` on the model service, `CAN_EDIT` on the experiment, `MODIFY` on the trace tables | `READ VOLUME` on `users.amanda_xu.erratum_files` only |
+| Check after deploy | [`sru-syntax-mcp/eval/databricks/nb-apps-mcp-testing-amandaxu.py`](sru-syntax-mcp/eval/databricks/nb-apps-mcp-testing-amandaxu.py) | `erratum-annotator/eval/databricks/mcp-erratum-note Inspector Gadget Test` (expect 0 errors, 46/48, 48/48) |
+
+* **Update in place, never recreate.** The workspace is at its 100-app limit and both apps already exist. Run
+  `databricks bundle validate` first; if the bundle state does not track `mcp-sru-syntax`, bind it
+  (`bundle deployment bind`) instead of creating it. Never rename the bundle resource key `sru_syntax_mcp`
+  without unbinding and rebinding, or the next deploy would delete the app.
+* **Callers need CAN USE.** Both apps are OAuth-gated by Databricks Apps. The test service principal
+  (Inspector Gadget) has CAN USE on both; its credentials stay in the Unity Catalog secret
+  `models.ai/inspector-gadget`, never in Git.
+* **Supervisor Agents are configured in Agent Bricks**, not in a bundle, so redeploying an app never changes
+  an agent. The `agent-erratum-annotator` tools and instructions are in
+  [`erratum-annotator/agent/README.md`](erratum-annotator/agent/README.md) so it can be recreated.
+* **Keep one source of rules.** Each project's deterministic rules are a governed UC function, and the agents
+  call tools instead of writing answers themselves. For Project 2, `process_sru_response` is generated from
+  `erratum-annotator/mcp_server/erratum_annotator.py`: regenerate it whenever that file changes
+  (`erratum-annotator/uc_functions/build_uc_functions.py`), then rerun the evaluation. Both projects' function
+  definitions are in Git (`sru-syntax-mcp/uc_functions/`, `erratum-annotator/uc_functions/`).
+
+## Tests
+
+* [`erratum-annotator/tests/`](erratum-annotator/tests/) -- `test_tool_errors.py`: error handling of the `mcp-erratum-note` tools (28 tests, no workspace access needed).
+* The `mcp-sru-syntax` server tests (smoke tests and SSRF hardening: `allow_redirects=False`, fixed endpoint URL, user input in the JSON body, error sanitization, stable error categories) run in CI in the hackathon repo, [`tests/`](https://github.com/AmandaZXu-USDA/mcp-hackathon-demo-sru/tree/main/tests).
 
 ## Status and next steps
 
@@ -368,5 +498,12 @@ personal access tokens are rejected.
   offline evaluation; Part 3 erratum annotation (second MCP server and agent) on saved SRU responses.
 * Known issue: the Supervisor Agent sometimes returns an empty reply for a title (3 of 41 eval rows). Use the
   function directly for those titles.
-* Next: run the SRU searches against Alma live (needs USDA eAuth; Part 3 currently reads saved responses) to retrieve the original article's MMS ID and link it to the
-  correction record; provision the evaluation service principal so the eval can run against the deployed app.
+* Next: run the SRU searches against Alma live (needs USDA eAuth; Part 3 currently reads saved responses) to
+  retrieve the original article's MMS ID and link it to the correction record; provision the evaluation service principal so the eval can run against the deployed app.
+
+## Acknowledgements
+
+This project is built on the [GSA MCP Hackathon template](https://github.com/GSA-TTS/mcp-hackathon-template)
+(copy in [`mcp-hackathon/`](mcp-hackathon/README.md)), adapted for the NAL SRU Syntax MCP server. The hackathon
+repo keeps the template's `src/`, `tests/`, `deploy/` and `eval/` structure; this repo keeps each project in
+its own folder.
