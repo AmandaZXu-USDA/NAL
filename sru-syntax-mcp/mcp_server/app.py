@@ -1,5 +1,8 @@
-"""Custom MCP server (streamable HTTP at /mcp) exposing the Agent Bricks Supervisor Agent
-"agent-sru-syntax" (serving endpoint mas-c8629507-endpoint) as one MCP tool.
+"""Custom MCP server (streamable HTTP at /mcp) with one tool, build_sru_search_url.
+
+Function first, agent second: the tool and the page first run the governed Unity Catalog function
+users.amanda_xu.build_sru_url on a SQL warehouse (usually 3-5 s). Only if that call fails do they ask the
+Agent Bricks Supervisor Agent "agent-sru-syntax" (serving endpoint mas-c8629507-endpoint, 15-90 s).
 
 The same app also hosts the SRU syntax agent (agent.py), which uses this MCP server:
   POST /invocations and POST /responses  - OpenAI Responses-style request: {"input": [...] or "text"}
@@ -13,6 +16,7 @@ import logging
 import os
 import re
 import secrets
+import threading
 import time
 import uuid
 
@@ -30,6 +34,12 @@ ENDPOINT = os.environ.get("SERVING_ENDPOINT", "mas-c8629507-endpoint")
 TIMEOUT_S = int(os.environ.get("AGENT_TIMEOUT_SECONDS", "300"))
 MAX_TITLE_CHARS = 1000
 SQL_FUNCTION = "users.amanda_xu.build_sru_url"
+WAREHOUSE_ID = os.environ.get("SQL_WAREHOUSE_ID", "")
+FUNCTION_WAIT = os.environ.get("FUNCTION_WAIT_TIMEOUT", "40s")  # SQL API wait, 5s-50s; then fall back to the agent
+NO_URL_TEXT = (
+    "No SRU URL: this notice does not name one original article (for example a bare 'Correction' or "
+    "'Erratum', or a notice for a whole issue), so there is nothing to search. Check it by hand."
+)
 SRU_PREFIX = "https://nal.alma.exlibrisgroup.com/view/sru/"
 RETRY_DEFAULT_WAIT_S = 2.0  # wait before retrying a busy (429) or unavailable agent
 RETRY_MAX_WAIT_S = 10.0  # cap on a Retry-After header, so the one retry stays short
@@ -222,6 +232,66 @@ def _call_agent_with_retry(title: str) -> str:
     return text
 
 
+def _call_function(title: str) -> str:
+    """Run the governed UC function on the SQL warehouse; return its URL ('' = no single original article).
+
+    The title is a bound parameter, never part of the SQL text. Raises on any failure, so the caller can
+    fall back to the agent.
+    """
+    if not WAREHOUSE_ID:
+        raise RuntimeError("SQL_WAREHOUSE_ID is not set")
+    from databricks.sdk.service.sql import (
+        ExecuteStatementRequestOnWaitTimeout,
+        StatementParameterListItem,
+        StatementState,
+    )
+
+    r = _ws.statement_execution.execute_statement(
+        warehouse_id=WAREHOUSE_ID,
+        statement=f"SELECT {SQL_FUNCTION}(:title) AS url",
+        parameters=[StatementParameterListItem(name="title", value=title)],
+        wait_timeout=FUNCTION_WAIT,
+        on_wait_timeout=ExecuteStatementRequestOnWaitTimeout.CANCEL,
+    )
+    if r.status is None or r.status.state != StatementState.SUCCEEDED:
+        raise RuntimeError(f"statement state {getattr(r.status, 'state', None)}")
+    rows = (r.result.data_array if r.result else None) or [[None]]
+    url = (rows[0][0] or "").strip()
+    if url and not url.startswith(SRU_PREFIX):
+        raise RuntimeError("function returned a non-SRU URL")
+    return url
+
+
+def _function_text(url: str) -> str:
+    return f"NAL Alma SRU search URL for the original article:\n{url}" if url else NO_URL_TEXT
+
+
+def _sru_lookup(title: str, use_agent: bool = False) -> dict:
+    """Function first; the agent only if the function call fails (or when use_agent is asked for).
+
+    An empty URL from the function is a real answer (no single original article). The agent calls the same
+    function, so asking it as well would only add a minute of waiting.
+    """
+    if not use_agent:
+        started = time.monotonic()
+        try:
+            url = _call_function(title)
+            log.info("function_ok seconds=%.1f has_url=%s", time.monotonic() - started, bool(url))
+            return {"source": "function", "text": _function_text(url)}
+        except Exception as e:  # any failure: fall back to the agent; never expose the exception text
+            log.warning("function_failed_fallback_to_agent exception=%s", type(e).__name__)
+    return {"source": "agent", "text": _call_agent_with_retry(title)}
+
+
+def _warm_up() -> None:
+    """Run the function once at start-up, so the first librarian does not wait for a cold Python UDF."""
+    try:
+        _call_function("Correction: warm up")
+        log.info("function_warm_up ok")
+    except Exception as e:
+        log.warning("function_warm_up failed exception=%s", type(e).__name__)
+
+
 def _check_title(title: object) -> None:
     """Reject empty or over-long titles before calling the agent."""
     if not isinstance(title, str) or not title.strip() or len(title) > MAX_TITLE_CHARS:
@@ -247,10 +317,11 @@ def _checked_reply(text: str) -> str:
     )
 )
 async def build_sru_search_url(correction_title: str) -> str:
-    """Send an erratum/correction notice title (e.g. 'Correction: <title>', 'Correction to “<title>”',
-    'Corrigendum: ...') to the agent-sru-syntax agent and return its reply, which contains the
-    NAL Alma production SRU searchRetrieve URL for the original article. Pass the full title exactly
-    as given. Replies can take 60-90 seconds.
+    """Turn an erratum/correction notice title (e.g. 'Correction: <title>', 'Correction to “<title>”',
+    'Corrigendum: ...') into the NAL Alma production SRU searchRetrieve URL for the original article.
+    Pass the full title exactly as given. Runs the governed SQL function users.amanda_xu.build_sru_url
+    first (usually 3-5 seconds); only if that fails, asks the agent-sru-syntax agent (15-90 seconds).
+    If the notice names no single original article, says so and returns no URL.
 
     Errors are returned as a short message that says what to do, with a stable category (invalid_input,
     timeout, unavailable, rate_limited, permission_denied, not_found, bad_request, bad_response,
@@ -258,7 +329,7 @@ async def build_sru_search_url(correction_title: str) -> str:
     temporary outage is retried once; timeouts are not."""
     try:
         _check_title(correction_title)
-        text = await asyncio.to_thread(_call_agent_with_retry, correction_title)
+        text = (await asyncio.to_thread(_sru_lookup, correction_title))["text"]
     except UpstreamError as e:
         log.warning(
             "tool_error error_id=%s category=%s status=%s retried=%s", e.error_id, e.category, e.status_code, e.retried
@@ -390,26 +461,32 @@ production SRU searchRetrieve URL for the original article. Open it to see the m
 </form>
 <div id="status" role="status" aria-live="polite"></div>
 <div id="result"></div>
-<p class="hint">Replies usually take 15-60 seconds. One title per request; for long lists, use the SQL
-function <code>users.amanda_xu.build_sru_url</code>. Copy URLs as they are; do not edit the encoding.</p>
+<p class="hint">Answers usually take 3-5 seconds: the page runs the governed SQL function
+<code>users.amanda_xu.build_sru_url</code> first and asks the AI agent (up to a minute) only if that fails.
+One title per request; for long lists, call the SQL function directly. Copy URLs as they are; do not edit
+the encoding.</p>
 <script nonce="__NONCE__">
 (function () {
   var PREFIX = "__PREFIX__";
   var form = document.getElementById("f"), btn = document.getElementById("go");
   var statusEl = document.getElementById("status"), out = document.getElementById("result");
   function para(text, cls) { var p = document.createElement("p"); p.textContent = text; if (cls) p.className = cls; return p; }
-  form.addEventListener("submit", async function (ev) {
-    ev.preventDefault();
+  var SOURCES = { "function": "Answered by the governed SQL function", "agent": "Answered by the AI agent" };
+  form.addEventListener("submit", function (ev) { ev.preventDefault(); run(false); });
+  async function run(useAgent) {
     var title = document.getElementById("title").value.trim();
     if (!title) return;
-    btn.disabled = true; out.replaceChildren(); statusEl.textContent = "Working... this usually takes 15-60 seconds.";
+    btn.disabled = true; out.replaceChildren();
+    statusEl.textContent = useAgent ? "Asking the AI agent... this can take up to a minute." : "Working... usually 3-5 seconds.";
+    var source = "";
     var started = Date.now(), ctrl = new AbortController(), timer = setTimeout(function () { ctrl.abort(); }, 300000);
     try {
       var r = await fetch("api/sru-url", { method: "POST", credentials: "same-origin", signal: ctrl.signal,
-        headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: title }) });
+        headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: title, use_agent: useAgent }) });
       var data = null; try { data = await r.json(); } catch (e) { data = null; }
       if (!data) { out.append(para("Your sign-in may have expired. Reload the page and try again.", "error")); return; }
       if (!r.ok) { out.append(para(data.error || ("Request failed (HTTP " + r.status + ")."), "error")); return; }
+      source = SOURCES[data.source] || "";
       var urls = (data.urls || []).filter(function (u) { return typeof u === "string" && u.indexOf(PREFIX) === 0; });
       if (urls.length) {
         urls.forEach(function (u) {
@@ -421,15 +498,19 @@ function <code>users.amanda_xu.build_sru_url</code>. Copy URLs as they are; do n
         });
       } else {
         out.append(para(data.text || "No SRU URL in the reply. Try again, or use the SQL function."));
+        if (data.source === "function") {
+          var ask = document.createElement("button"); ask.type = "button"; ask.textContent = "Ask the AI agent instead (up to a minute)";
+          ask.addEventListener("click", function () { run(true); }); out.append(ask);
+        }
       }
     } catch (e) {
       out.append(para(e && e.name === "AbortError" ? "No reply after 5 minutes. Try again later."
         : "Could not reach the app. Your sign-in may have expired; reload the page and try again.", "error"));
     } finally {
       clearTimeout(timer); btn.disabled = false;
-      statusEl.textContent = "Done in " + Math.round((Date.now() - started) / 1000) + " s.";
+      statusEl.textContent = "Done in " + Math.round((Date.now() - started) / 1000) + " s." + (source ? " " + source + "." : "");
     }
-  });
+  }
 })();
 </script>
 </body>
@@ -467,12 +548,13 @@ async def sru_url_api(request: Request) -> JSONResponse:
     except Exception:
         return JSONResponse({"error": "Request body must be JSON"}, status_code=400)
     title = body.get("title") if isinstance(body, dict) else None
+    use_agent = isinstance(body, dict) and body.get("use_agent") is True
     if not isinstance(title, str) or not title.strip():
         return JSONResponse({"error": "Body must include 'title' (the correction title)"}, status_code=400)
     if len(title) > MAX_TITLE_CHARS:
         return JSONResponse({"error": f"Title is longer than {MAX_TITLE_CHARS} characters"}, status_code=400)
     try:
-        text = await asyncio.to_thread(_call_agent_with_retry, title.strip())
+        found = await asyncio.to_thread(_sru_lookup, title.strip(), use_agent)
     except UpstreamError as e:
         log.warning(
             "page_error error_id=%s category=%s status=%s retried=%s", e.error_id, e.category, e.status_code, e.retried
@@ -482,9 +564,9 @@ async def sru_url_api(request: Request) -> JSONResponse:
         err = UpstreamError("internal")
         log.warning("page_error error_id=%s category=unexpected exception=%s", err.error_id, type(e).__name__)
         return _upstream_error(err)
-    text = _checked_reply(text)
+    text = _checked_reply(found["text"])
     urls = [u.rstrip(").,;") for u in _SRU_URL_RE.findall(text)]
-    return JSONResponse({"text": text, "urls": list(dict.fromkeys(urls))})
+    return JSONResponse({"text": text, "urls": list(dict.fromkeys(urls)), "source": found["source"]})
 
 
 _ERROR_STATUS = {"invalid_input": 400, "timeout": 504, "rate_limited": 429}
@@ -505,4 +587,6 @@ app.add_route("/invocations", invocations, methods=["POST"])
 app.add_route("/responses", invocations, methods=["POST"])
 
 if __name__ == "__main__":
+    if WAREHOUSE_ID:
+        threading.Thread(target=_warm_up, daemon=True).start()
     uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("DATABRICKS_APP_PORT", "8000")))
