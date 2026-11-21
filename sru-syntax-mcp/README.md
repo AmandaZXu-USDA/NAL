@@ -11,7 +11,7 @@ The workspace is at its 100-app limit, so the MCP server and the agent share the
 
 | Endpoint | Code | What it does |
 | --- | --- | --- |
-| `/mcp` | `mcp_server/app.py` | MCP server (streamable HTTP) with one tool, `build_sru_search_url`, that calls the agent-sru-syntax Supervisor Agent endpoint `mas-c8629507-endpoint` |
+| `/mcp` | `mcp_server/app.py` | MCP server (streamable HTTP) with one tool, `build_sru_search_url`: runs `users.amanda_xu.build_sru_url` on a SQL warehouse first (about 4 s) and falls back to the agent-sru-syntax Supervisor Agent endpoint `mas-c8629507-endpoint` |
 | `POST /invocations`, `POST /responses` | `mcp_server/agent.py` | OpenAI Agents SDK agent that uses the `/mcp` tool over localhost |
 | `GET /health` | `mcp_server/app.py` | Liveness check |
 
@@ -66,7 +66,8 @@ curl -X POST "https://mcp-sru-syntax-7474654188777746.aws.databricksapps.com/inv
 ```
 
 Apps require an OAuth token (`databricks auth token`); personal access tokens are not accepted.
-Each title can take 60-90 seconds because the Supervisor Agent does the lookup.
+The tool itself answers in about 4 seconds (SQL function first); this agent adds its own model calls on
+top. In earlier traces, when the tool still went through the Supervisor Agent, it took 18-38 seconds per title.
 
 ## Tracing
 

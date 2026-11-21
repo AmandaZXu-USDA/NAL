@@ -131,12 +131,14 @@ https://nal.alma.exlibrisgroup.com/view/sru/01NAL_INST?version=1.2&operation=sea
 | --- | --- |
 | Unity Catalog function `users.amanda_xu.build_sru_url(correction_title)` | Python UDF with the Part 1 rules. Deterministic; the source of truth for SRU URLs. Use it for bulk processing in SQL. |
 | Supervisor Agent `agent-sru-syntax` (endpoint `mas-c8629507-endpoint`) | Agent Bricks agent that calls the function as a tool. |
-| Databricks App `mcp-sru-syntax` | Custom MCP server with one read-only tool, `build_sru_search_url`, that calls the Supervisor Agent. The same app serves an OpenAI Agents SDK agent at `/invocations` that uses the tool. See [`sru-syntax-mcp/README.md`](sru-syntax-mcp/README.md). |
+| Databricks App `mcp-sru-syntax` | Custom MCP server with one read-only tool, `build_sru_search_url`, that runs the function on a SQL warehouse first (about 4 s) and asks the Supervisor Agent only if that call fails. The same app serves an OpenAI Agents SDK agent at `/invocations` that uses the tool. See [`sru-syntax-mcp/README.md`](sru-syntax-mcp/README.md). |
 | Agent skill `agent-sru-syntax` | Instructions and rules for coding agents working on this project ([`SKILL.md`](sru-syntax-mcp/.agents/skills/agent-sru-syntax/SKILL.md)). |
 | Offline evaluation | MLflow GenAI evaluation over 41 labelled notices ([`sru-syntax-mcp/eval/databricks/`](sru-syntax-mcp/eval/databricks/README.md)). |
 
-For bulk work, call the function from SQL. The agent takes about 20 seconds per title, so it suits
-interactive use rather than thousands of rows.
+For bulk work, call the function from SQL. The MCP tool and the browser page answer in about 4 seconds
+per title (live test 2026-11-21: 3.9-4.7 s), because they run the function first; the Supervisor Agent
+(about 20 seconds per title) is only the fallback. Either way they suit interactive use rather than
+thousands of rows.
 
 ### Two ways to reach the logic over MCP
 
