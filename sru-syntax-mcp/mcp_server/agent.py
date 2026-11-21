@@ -11,8 +11,16 @@ from agents.mcp import MCPServerStreamableHttp
 from agents.tracing import set_trace_processors
 from databricks_openai import AsyncDatabricksOpenAI
 
-# Point the OpenAI Agents SDK at Databricks (models reached through Unity Gateway)
-set_default_openai_client(AsyncDatabricksOpenAI(use_ai_gateway=True))
+# Environment variables injected from the app resources declared in databricks.yml
+MODEL_SERVICE = os.environ["MODEL_SERVICE"]
+# AGENT_MODEL, if set, is a Databricks-hosted foundation model serving endpoint (for example
+# databricks-gpt-5-6-luna) used instead of the Unity Gateway model service. Added 2026-11-21 because
+# the OpenAI API key behind the models.ai model services expired (401 on every call).
+AGENT_MODEL = os.environ.get("AGENT_MODEL", "").strip()
+MODEL = AGENT_MODEL or MODEL_SERVICE
+
+# Point the OpenAI Agents SDK at Databricks: a serving endpoint, or a model through Unity Gateway
+set_default_openai_client(AsyncDatabricksOpenAI(use_ai_gateway=not AGENT_MODEL))
 set_default_openai_api("responses")
 
 # Send traces to MLflow instead of OpenAI
@@ -20,8 +28,6 @@ set_trace_processors([])
 mlflow.set_tracking_uri("databricks")
 mlflow.openai.autolog()  # automatic tracing of every model and tool call
 
-# Environment variables injected from the app resources declared in databricks.yml
-MODEL_SERVICE = os.environ["MODEL_SERVICE"]
 mlflow.set_experiment(experiment_id=os.environ["MLFLOW_EXPERIMENT_ID"])
 
 # This app's own MCP endpoint (same process, served by app.py)
@@ -67,7 +73,7 @@ def preprocess(messages: list[dict] | str) -> list[dict]:
 @mlflow.trace(name="sru_syntax_agent_run", span_type="AGENT")
 async def run_agent(messages: list[dict] | str) -> str:
     """Run the agent with this app's MCP tools and return the final reply."""
-    mlflow.update_current_trace(tags={"agent_name": "SRU Syntax Agent", "model_service": MODEL_SERVICE})
+    mlflow.update_current_trace(tags={"agent_name": "SRU Syntax Agent", "model_service": MODEL})
 
     # Custom span: trace our own preprocessing in the same trace
     with mlflow.start_span(name="preprocessing") as span:
@@ -84,7 +90,7 @@ async def run_agent(messages: list[dict] | str) -> str:
         agent = Agent(
             name="SRU Syntax Agent",
             instructions=INSTRUCTIONS,
-            model=MODEL_SERVICE,
+            model=MODEL,
             mcp_servers=[mcp_server],
         )
         result = await Runner.run(agent, cleaned)
