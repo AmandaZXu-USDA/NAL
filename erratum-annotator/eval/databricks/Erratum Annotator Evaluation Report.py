@@ -22,6 +22,13 @@ for c in BOOL:
     r[c] = r[c].astype(str) == "True"
 runs = json.load(open(RUNS_JSON))
 
+# Direct MCP server test as the Inspector Gadget service principal (notebook "mcp-erratum-note Inspector Gadget Test")
+IG_CSV = f"{DOC}/mcp-erratum-note-inspector-test-20261121.csv"
+ig = pd.read_csv(IG_CSV, keep_default_na=False)
+for c in ["is_error", "title_ok", "mms_ok", "needs_review"]:
+    ig[c] = ig[c].astype(str) == "True"
+print(len(ig), "Inspector Gadget rows, run", ig["run_ts"].iloc[0])
+
 N = len(r)
 has_original = r["case"].isin(["annotated", "already_annotated"])  # rows with an expected original MMS ID
 has_file = ~r["case"].isin(["manual_review", "no_file_no_original"])  # rows with a saved SRU response
@@ -248,15 +255,45 @@ story += [p("7. Findings and recommendations", H1),
               "responses and needs_review cases.",
           ])]
 
-# 8. Artifacts
-story += [p("8. Artifacts and reproduction", H1),
+# 8. MCP server test (Inspector Gadget)
+ig_diff = sorted(ig.loc[ig.is_error | ~ig.title_ok | ~ig.mms_ok, "row_num"].tolist())
+assert ig_diff == [4, 24], f"Inspector Gadget differences changed: {ig_diff}"
+assert not ig.loc[ig.row_num.isin(ig_diff), "needs_review"].any()
+ig_frac = lambda col: f"{int(ig[col].sum())}/{len(ig)}"
+story += [p("8. MCP server test (Inspector Gadget)", H1),
+          p(f"The MCP server was also tested directly, without the agent, on {ig['run_ts'].iloc[0].replace('T', ' ')} "
+            "UTC. A test client signed in as the Inspector Gadget service principal (OAuth M2M, CAN_USE on the app), "
+            f"listed the 7 tools, called list_sru_files and then process_sru_file on each of the {len(ig)} saved SRU "
+            "responses, and compared annotated_title and original_id with the ground truth. Each run is appended to "
+            "the table users.amanda_xu.erratum_mcp_inspector_test."),
+          table([["Check", "Result"],
+                 ["Tools listed", "7: health, parse_sru_response, extract_erratum_note, enhance_title, "
+                                  "process_sru_response, list_sru_files, process_sru_file"],
+                 ["Tool errors", f"{int(ig.is_error.sum())}/{len(ig)}"],
+                 ["annotated_title exact", ig_frac("title_ok")],
+                 ["original MMS ID match", ig_frac("mms_ok")],
+                 ["Latency per process_sru_file call",
+                  f"median {ig.latency_sec.median():.2f} s, max {ig.latency_sec.max():.2f} s"]],
+                [2.0, 4.5]),
+          p("Rows 4 and 24 are the only differences. Alma has no original for them, so the ground-truth title is "
+            "blank. The tool correctly returns no original_id, but it still builds an annotated title from the search "
+            "title and sets needs_review to false. Recommendation: when no original is found, return no annotated_title "
+            "or set needs_review to true."),
+          p("The tool answers in under a second, so nearly all of the agent's per-request time (section 6) is spent "
+            "in the Supervisor Agent, not in the MCP server.")]
+
+# 9. Artifacts
+story += [p("9. Artifacts and reproduction", H1),
           table([["Item", "Location"],
                  ["Evaluation notebook", "/Users/amanda.xu@usda.gov/erratum-annotator/eval/Erratum Annotator Agent Evaluation"],
                  ["Report notebook", "/Users/amanda.xu@usda.gov/erratum-annotator/eval/Erratum Annotator Evaluation Report"],
                  ["MLflow experiment", f"{runs['experiment']} (id {runs['experiment_id']})"],
                  ["Full run", runs["full_run_id"]], ["Rescore run", runs["rescore_run_id"]],
                  ["Smoke run", runs["smoke_run_id"]],
-                 ["Per-row results", RESULTS_CSV]],
+                 ["Per-row results", RESULTS_CSV],
+                 ["Inspector Gadget test notebook",
+                  "/Users/amanda.xu@usda.gov/NAL/erratum-annotator/eval/databricks/mcp-erratum-note Inspector Gadget Test"],
+                 ["Inspector Gadget results", IG_CSV]],
                 [1.5, 5.0], code_cols=(1,)),
           Spacer(1, 4),
           p("To reproduce: run the evaluation notebook top to bottom (cells 2 to 4 need no agent calls), then this "
@@ -287,7 +324,9 @@ reader = PdfReader(OUTPUT_PATH)
 flat = " ".join(" ".join(page.extract_text() for page in reader.pages).split())
 print(f"{os.path.getsize(OUTPUT_PATH):,} bytes, {len(reader.pages)} pages")
 checks = ["1. Summary", "2. System under test", "3. Evaluation dataset", "4. Method", "5. Results",
-          "6. Latency and tool use", "7. Findings and recommendations", "8. Artifacts and reproduction",
+          "6. Latency and tool use", "7. Findings and recommendations", "8. MCP server test (Inspector Gadget)",
+          "9. Artifacts and reproduction", "erratum_mcp_inspector_test", ig_frac("title_ok"), ig_frac("mms_ok"),
+          f"median {ig.latency_sec.median():.2f} s",
           frac("annotated_title_exact"), frac("erratum_note_exact"), frac("original_mms_id_match"), frac("called_tool"),
           frac("correctness"), frac("no_fabrication"), runs["full_run_id"], runs["rescore_run_id"], runs["experiment_id"],
           runs["endpoint"], "U+2019", "290 s", "48 to 50/53", "40 to 52/53", f"max {lat.max():.1f} s"]
