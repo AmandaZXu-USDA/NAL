@@ -27,6 +27,7 @@ sru-syntax-mcp/
     app.py                           MCP server + agent HTTP routes
     agent.py                         agent, local MCP connection, MLflow tracing
     app.yaml, requirements.txt       env from app resources; dependencies
+  uc_functions/build_sru_url.sql     the UC function the tool runs (tools and functions: deploy/databricks/README.md)
   agent/                             standalone agent app version (not deployed; use if app capacity frees up)
   setup/create_uc_backed_experiment.py  optional: experiment with traces in Unity Catalog
 ```

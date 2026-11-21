@@ -54,8 +54,8 @@ https://nal.alma.exlibrisgroup.com/view/sru/01NAL_INST?version=1.2&operation=sea
 | Folder | What it is |
 | --- | --- |
 | [`title-extraction/`](title-extraction/README.md) | Part 1: `erratum_title_extractor.py`, the spreadsheet processing script. |
-| [`sru-syntax-mcp/`](sru-syntax-mcp/README.md) | Part 2: MCP server and agent (Databricks App), bundle config, agent skill, offline evaluation. |
-| [`erratum-annotator/`](erratum-annotator/README.md) | Part 3: MCP server `mcp-erratum-note`, agent `agent-erratum-annotator` configuration, evaluation, Inspector Gadget test and report. |
+| [`sru-syntax-mcp/`](sru-syntax-mcp/README.md) | Part 2: MCP server and agent (Databricks App), UC function `build_sru_url` (`uc_functions/`), bundle config, agent skill, offline evaluation. Tools and functions: [`deploy/databricks/README.md`](sru-syntax-mcp/deploy/databricks/README.md#tools-and-functions). |
+| [`erratum-annotator/`](erratum-annotator/README.md) | Part 3: MCP server `mcp-erratum-note`, UC functions (`uc_functions/`), agent `agent-erratum-annotator` configuration, evaluation, Inspector Gadget test and report. Tools and functions: [`README.md`](erratum-annotator/README.md#mcp-tools). |
 | [`submission/`](submission/README.md) | Hackathon deck, both evaluation reports and the librarian quick-start (same files as the hackathon repo). |
 | [`mcp-hackathon/`](mcp-hackathon/README.md) | The GSA MCP Hackathon server template this project started from (FastMCP, deploy kits, eval templates). |
 
