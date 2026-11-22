@@ -3,7 +3,7 @@
 # MAGIC %md
 # MAGIC # Offline evaluation: agent-erratum-annotator
 # MAGIC
-# MAGIC Evaluates the Supervisor Agent **agent-erratum-annotator** (endpoint `mas-c341c0aa-endpoint`; tools: MCP app `mcp-erratum-note` + UC function `users.amanda_xu.process_sru_response`) with `mlflow.genai.evaluate`.
+# MAGIC Evaluates the Supervisor Agent **agent-erratum-annotator** (endpoint `mas-c341c0aa-endpoint`; traces in Unity Catalog `users.amanda_xu.agent_erratum_eval_otel_*`, with the agent's own spans attached; tools: MCP app `mcp-erratum-note` + UC function `users.amanda_xu.process_sru_response`) with `mlflow.genai.evaluate`.
 # MAGIC
 # MAGIC **Ground truth:** `/Volumes/users/amanda_xu/erratum_files/Correction-Sample1-53-annotated.csv` (53 rows, librarian-checked). Saved SRU responses: `.../erratum_files/sru_responses/` (48 files).
 # MAGIC
@@ -37,14 +37,20 @@ import mlflow
 
 # --- CONFIG ---------------------------------------------------------------
 ENDPOINT = "mas-c341c0aa-endpoint"  # agent-erratum-annotator (Supervisor Agent)
-EXPERIMENT_PATH = "/Users/amanda.xu@usda.gov/agent-erratum-annotator-eval"
+EXPERIMENT_PATH = "/Users/amanda.xu@usda.gov/agent-erratum-annotator-eval-uc"  # traces stored in Unity Catalog
+# Traces go to users.amanda_xu.agent_erratum_eval_otel_* (the experiment is bound to this location once; it cannot move).
+TRACE_CATALOG, TRACE_SCHEMA, TRACE_PREFIX = "users", "amanda_xu", "agent_erratum_eval"
+os.environ.setdefault("MLFLOW_TRACING_SQL_WAREHOUSE_ID", "50d2bd4ddf65e0f5")  # Serverless Starter Warehouse
 GROUND_TRUTH = "/Volumes/users/amanda_xu/erratum_files/Correction-Sample1-53-annotated.csv"
 SRU_DIR = "/Volumes/users/amanda_xu/erratum_files/sru_responses"
 MAX_ROWS = None  # e.g. 10 for a quick run
 os.environ.setdefault("MLFLOW_GENAI_EVAL_MAX_WORKERS", "3")  # keep load on the agent low
 # --------------------------------------------------------------------------
 
-mlflow.set_experiment(EXPERIMENT_PATH)
+from mlflow.entities.trace_location import UnityCatalog
+
+mlflow.set_experiment(experiment_name=EXPERIMENT_PATH, trace_location=UnityCatalog(
+    catalog_name=TRACE_CATALOG, schema_name=TRACE_SCHEMA, table_prefix=TRACE_PREFIX))
 
 
 def _unexcel(v: str) -> str:
@@ -356,6 +362,7 @@ print(f"Regression checks passed (tool title: {len(curly)} rows with U+2019)")
 # DBTITLE 1,Predict function: call the agent endpoint
 import json
 from databricks.sdk import WorkspaceClient
+from mlflow.entities import Trace
 
 client = WorkspaceClient().serving_endpoints.get_open_ai_client().with_options(timeout=300, max_retries=2)
 MAX_ROUNDS = 8  # approval round trips per request
@@ -378,10 +385,20 @@ def predict(request: str) -> dict:
     final_text = ""
     for _ in range(MAX_ROUNDS):
         try:
-            resp = client.responses.create(model=ENDPOINT, input=history)
+            # return_trace: the Supervisor Agent sends back its own trace (LLM spans with token usage, TOOL
+            # spans for process_sru_file); add_trace attaches it under this span, so the experiment shows
+            # tool calls, token usage and per-step latency.
+            resp = client.responses.create(model=ENDPOINT, input=history,
+                                           extra_body={"databricks_options": {"return_trace": True}})
         except Exception as e:
             return {"response": final_text, "all_text": "\n".join(texts).strip(), "tool_calls": tool_calls,
                     "truncated": False, "error": f"{type(e).__name__}: {e}"}
+        agent_trace = (_dump(resp).get("databricks_output") or {}).get("trace")
+        if agent_trace:
+            try:
+                mlflow.add_trace(Trace.from_dict(agent_trace))
+            except Exception as e:  # tracing must never fail the request
+                print(f"add_trace skipped: {type(e).__name__}: {e}")
         items = [_dump(i) for i in resp.output]
         history += items
         approvals, round_texts = [], []
@@ -531,7 +548,7 @@ display(bad[["row_num", "case", rd_val("annotated_title_exact"), rat("annotated_
 import json, os
 
 RESULTS_DIR = "/Workspace/Users/amanda.xu@usda.gov/erratum-annotator/eval/doc"
-RUN_TAG = "20261122"  # date of the run; earlier runs' files (e.g. 20261120) are kept
+RUN_TAG = "20261122-uc"  # date of the run; earlier runs' files (e.g. 20261120) are kept
 os.makedirs(RESULTS_DIR, exist_ok=True)
 
 rs = rd.set_index("row_num")
