@@ -230,6 +230,7 @@ the exact work to tools. It is a small, two-stage system, not an open-ended agen
 | [`sru-syntax-mcp/`](sru-syntax-mcp/README.md) | Part 2: MCP server and agent (Databricks App), UC function `build_sru_url` (`uc_functions/`), bundle config, agent skill, offline evaluation. Tools and functions: [`sru-syntax-mcp/deploy/databricks/README.md`](sru-syntax-mcp/deploy/databricks/README.md#tools-and-functions). |
 | [`erratum-annotator/`](erratum-annotator/README.md) | Part 3: MCP server `mcp-erratum-note`, UC functions (`uc_functions/`), agent `agent-erratum-annotator` configuration, evaluation, Inspector Gadget test and report. Tools and functions: [`README.md`](erratum-annotator/README.md#mcp-tools). |
 | [`submission/`](submission/README.md) | Hackathon deck, both evaluation reports and the librarian quick-start (same files as the hackathon repo). |
+| [`scripts/`](scripts/README.md) | Command-line scripts for routine jobs: add a new SRU response sample, recreate a UC function and keep its grants, copy changes to the hackathon repo, check both live apps. Same scripts in both repos. |
 | [`mcp-hackathon/`](mcp-hackathon/README.md) | The GSA MCP Hackathon server template this project started from (FastMCP, deploy kits, eval templates). |
 
 ## Part 1: Spreadsheet processing
