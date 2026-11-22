@@ -78,7 +78,8 @@ def build_row(r) -> dict:
         # Rows 9 and 39: the librarian's Alma search found only the correction notice. The request passes that
         # search result on, as a librarian would; the agent cannot tell it from a missing file alone.
         request += " The librarian's Alma search found only the correction notice; the original article is not in Alma."
-    note = re.search(r"\[Erratum:.*?\]", expected)
+    # Two corrections of one original (row 41, since 2026-11-22): every note, in order, joined by a space.
+    notes = re.findall(r"\[Erratum:.*?\]", expected)
     if expected:
         case = "already_annotated" if status.startswith("already") else "annotated"
         facts = [f'The annotated original title is "{expected}"']
@@ -102,7 +103,7 @@ def build_row(r) -> dict:
         "inputs": {"request": request},
         "expectations": {
             "expected_annotated_title": expected,
-            "expected_erratum_note": note.group(0) if note else "",
+            "expected_erratum_note": " ".join(notes),
             "expected_original_mms_id": r.original_mms_id,
             "has_sru_file": bool(f),
             "expected_facts": facts,
@@ -190,6 +191,7 @@ def annotated_title_exact(outputs, expectations) -> Feedback:
 @scorer
 def erratum_note_exact(outputs, expectations) -> Feedback:
     exp = _n(expectations["expected_erratum_note"])
+    exp_notes = set(NOTE_RE.findall(exp))  # one note, or several when one original has two corrections
     appended = _appended_notes(_reply(outputs))
     if not exp:
         return Feedback(value=not appended, rationale="No annotation expected; " + (
@@ -199,11 +201,13 @@ def erratum_note_exact(outputs, expectations) -> Feedback:
     # (title and note on separate lines), fall back to every real note in the reply.
     notes = appended or [_n(x) for x in _real_notes(_n(_reply(outputs)))]
     distinct = set(notes)
-    ok = distinct == {exp}
+    ok = distinct == exp_notes
     if ok:
-        why = "Note matches"
-    elif exp in distinct:
-        why = f"Expected note found, but the reply also has {sorted(distinct - {exp})}"
+        why = "Note matches" if len(exp_notes) == 1 else f"All {len(exp_notes)} notes match"
+    elif exp_notes < distinct:
+        why = f"Expected note(s) found, but the reply also has {sorted(distinct - exp_notes)}"
+    elif distinct and distinct < exp_notes:
+        why = f"Missing note(s) {sorted(exp_notes - distinct)}"
     else:
         why = f"Expected {exp}; got {notes or 'no note'}"
     return Feedback(value=ok, rationale=why)
@@ -527,6 +531,7 @@ display(bad[["row_num", "case", rd_val("annotated_title_exact"), rat("annotated_
 import json, os
 
 RESULTS_DIR = "/Workspace/Users/amanda.xu@usda.gov/erratum-annotator/eval/doc"
+RUN_TAG = "20261122"  # date of the run; earlier runs' files (e.g. 20261120) are kept
 os.makedirs(RESULTS_DIR, exist_ok=True)
 
 rs = rd.set_index("row_num")
@@ -549,12 +554,12 @@ out = pd.DataFrame({
     "reply": df["reply"].str.slice(0, 2000),
 }).sort_values("row_num")
 
-csv_path = f"{RESULTS_DIR}/agent-erratum-annotator-eval-results-20261120.csv"
+csv_path = f"{RESULTS_DIR}/agent-erratum-annotator-eval-results-{RUN_TAG}.csv"
 out.to_csv(csv_path, index=False)
 run_info = {"experiment": EXPERIMENT_PATH, "experiment_id": mlflow.get_experiment_by_name(EXPERIMENT_PATH).experiment_id,
             "full_run_id": results.run_id, "rescore_run_id": rescored.run_id, "smoke_run_id": smoke_results.run_id,
             "endpoint": ENDPOINT, "rows": len(out)}
-with open(f"{RESULTS_DIR}/agent-erratum-annotator-eval-runs-20261120.json", "w") as fh:
+with open(f"{RESULTS_DIR}/agent-erratum-annotator-eval-runs-{RUN_TAG}.json", "w") as fh:
     json.dump(run_info, fh, indent=2)
 print(csv_path, len(out), "rows"); print(run_info)
 print(out[[s.name for s in DET] + ["correctness", "no_fabrication"]].sum().to_string())
