@@ -10,12 +10,13 @@ import json
 import pandas as pd
 
 DOC = "/Workspace/Users/amanda.xu@usda.gov/NAL/erratum-annotator/eval/databricks/doc"
-RESULTS_CSV = f"{DOC}/agent-erratum-annotator-eval-results-20261122-s4.csv"  # Sample 1 + Sample 4, traces in Unity Catalog
+RESULTS_CSV = f"{DOC}/agent-erratum-annotator-eval-results-20261122-s4-nocorr.csv"  # Sample 1 + 4, after the no_correction rule
+PRE_CSV = f"{DOC}/agent-erratum-annotator-eval-results-20261122-s4.csv"  # Sample 1 + 4, before the no_correction rule
 UC_CSV = f"{DOC}/agent-erratum-annotator-eval-results-20261122-uc.csv"  # same day, Sample 1 only, traces in Unity Catalog
 GT4_CSV = "/Volumes/users/amanda_xu/erratum_files/Correction-Sample4-29-annotated.csv"
 PREV_CSV = f"{DOC}/agent-erratum-annotator-eval-results-20261121.csv"  # November 21 run, for comparison
 BASE_CSV = f"{DOC}/agent-erratum-annotator-eval-results-20261122.csv"  # same day, same scorers, no agent trace returned
-RUNS_JSON = f"{DOC}/agent-erratum-annotator-eval-runs-20261122-s4.json"
+RUNS_JSON = f"{DOC}/agent-erratum-annotator-eval-runs-20261122-s4-nocorr.json"
 OUTPUT_PATH = f"{DOC}/agent-erratum-annotator-evaluation-report.pdf"
 RUN_DATE = "November 22, 2026"
 SRU_DIR = "/Volumes/users/amanda_xu/erratum_files/sru_responses"
@@ -23,6 +24,7 @@ import os
 n_saved = len([f for f in os.listdir(SRU_DIR) if f.endswith(".xml")])
 base = pd.read_csv(BASE_CSV, keep_default_na=False)
 uc = pd.read_csv(UC_CSV, keep_default_na=False)
+pre = pd.read_csv(PRE_CSV, keep_default_na=False)
 
 r = pd.read_csv(RESULTS_CSV, keep_default_na=False)
 BOOL = ["truncated", "annotated_title_exact", "erratum_note_exact", "original_mms_id_match", "called_tool",
@@ -155,7 +157,6 @@ _TIMEOUT = ("Agent timeout: the request reached the Supervisor Agent's 290 s lim
             "was a continue / wrap up prompt, with no title, note or MMS ID.")
 DET_FAIL = {
     404: "Both notes, in date order; " + _CURLY[0].lower() + _CURLY[1:],
-    426: _TIMEOUT,
     429: _CURLY,
     34: "Erratum note correct, but the agent replaced the curly apostrophe (U+2019) in the catalog title with a straight one; the tool's annotated_title was exact.",
     40: "Erratum note correct, but the agent replaced the curly apostrophe (U+2019) in the catalog title with a straight one; the tool's annotated_title was exact.",
@@ -163,28 +164,31 @@ DET_FAIL = {
 assert set(rows_of(~r.annotated_title_exact | ~r.erratum_note_exact | ~r.original_mms_id_match)) == set(DET_FAIL), \
     "Deterministic failures changed: update DET_FAIL"
 CORR_FAIL = {
-    417: "Judge error: the reply says Alma has only the correction notice and gives no annotated title, as expected; the "
-         "judge failed it because the reply does not also say that it gives no search_title fallback.",
-    426: _TIMEOUT,
+    4: "Judge error: the reply says Alma has only the correction notice and gives no annotated title, as expected; the "
+       "judge failed it because the reply does not also say that it gives no search_title fallback.",
+    41: "Judge error: says the reply's original MMS ID differs from the expected one; both are 9916848606207426. Both "
+        "notes and the title are exact.",
 }
 assert set(rows_of(~r.correctness)) == set(CORR_FAIL), "Correctness failures changed: update CORR_FAIL"
 FAB_GROUPS = [
     ("Judge error: treats the original article's MMS ID as invented because it differs from the correction notice's MMS ID "
      "or is not in the request. It comes from process_sru_file (original_id) and matches the ground truth.",
-     [13, 22, 25, 41, 42, 43, 51, 402, 405, 423, 424, 428]),
-    ("Judge error: objects that the reply names the original article (from the tool result) while saying no annotated "
-     "title can be produced because the correction notice is not in Alma.", [425]),
-    ("Agent timeout (290 s limit): no answer to judge.", [426]),
+     [3, 7, 21, 22, 38, 42, 44, 47, 52, 402, 405, 408, 410, 411, 412, 421, 428]),
+    ("Judge error: applies the 'say so when no annotated title can be produced' guideline to replies that did give "
+     "the exact title (or, row 35, correctly said it was already annotated).", [35, 48, 49, 50]),
 ]
 assert sorted(sum((g for _, g in FAB_GROUPS), [])) == rows_of(~r.no_fabrication), "no_fabrication failures changed"
 assert r.loc[r.row_num.isin(FAB_GROUPS[0][1]), "original_mms_id_match"].all()
 n_fab = int((~r.no_fabrication).sum())
-assert int(r.loc[lat_idx := r.latency_s.idxmax(), "row_num"]) == 426 and "Request Time Out" in r.loc[lat_idx, "reply"]
+assert not r.reply.str.contains("Request Time Out").any(), "a request timed out"
 reply404 = r.loc[r.row_num == 404, "reply"].iloc[0]
 assert r.loc[r.row_num == 404, "erratum_note_exact"].item() and "10.1007/s00018-025-05965-6" in reply404 \
     and reply404.index("05965-6") < reply404.index("05953-w")
 reply425 = r.loc[r.row_num == 425, "reply"].iloc[0]
-assert "No original in Alma" in reply425 and r.loc[r.row_num == 425, "annotated_title_exact"].item()
+assert "no correction in alma - original only" in reply425.lower() and "no original in alma" not in reply425.lower()
+assert r.loc[r.row_num == 425, "annotated_title_exact"].item()
+NO_ORIG_LABEL = rows_of(r.case.isin(["file_but_no_original", "no_file_no_original"]))
+assert all("no original in alma" in r.loc[r.row_num == n, "reply"].item().lower() for n in NO_ORIG_LABEL)
 NO_ANN = rows_of(r.expected_annotated_title == "")
 NO_FILE = rows_of(~has_file)
 assert (r.loc[~has_file, "tools"] == "").all(), "a no-file row called a tool"
@@ -200,22 +204,20 @@ story += [p("agent-erratum-annotator: Evaluation Report", ParagraphStyle("T", pa
 # 1. Summary
 story += [p("1. Summary", H1),
           p(f"The agent was evaluated on {N} rows: all {N1} rows of the librarian-checked Sample 1 spreadsheet (row 41 "
-            f"expects two erratum notes) and the {N4} rows of Sample 4 (rows 2 to 30). Sample 4's expected titles were "
-            "drafted from the tool output and approved as drafted by the project owner on November 22, 2026; they were "
-            "not re-checked record by record against Alma, so on Sample 4 the title scores show that the agent passes "
-            "the tool's title through, not that the tool is right. "
-            f"The agent returned the exact annotated original title on {frac('annotated_title_exact')} rows "
-            f"(Sample 1 {F('annotated_title_exact', 1)}, Sample 4 {F('annotated_title_exact', 4)}) and the correct "
+            f"expects two erratum notes) and the {N4} rows of Sample 4 (rows 2 to 30), after a new instruction rule for "
+            "the no_correction status (section 10). Sample 4's expected titles were drafted from the tool output and "
+            "approved as drafted by the project owner on November 22, 2026; they were not re-checked record by record "
+            "against Alma, so on Sample 4 the title scores show that the agent passes the tool's title through, not that "
+            f"the tool is right. The agent returned the exact annotated original title on {frac('annotated_title_exact')} "
+            f"rows (Sample 1 {F('annotated_title_exact', 1)}, Sample 4 {F('annotated_title_exact', 4)}) and the correct "
             f"original MMS ID on {frac('original_mms_id_match')} rows that have one. It used a saved-response tool on "
             f"every row with an SRU file ({frac('called_tool')})."),
-          p("Four of the five exact-title failures (S1 rows 34 and 40, S4 rows 4 and 29) come from a limitation of the "
-            "Supervisor Agent: it cannot output the curly apostrophe (U+2019) and writes a straight one; the tool result "
-            "has the exact catalog title on those rows. The fifth, S4 row 26, is an agent timeout: the request reached "
-            "the Supervisor Agent's 290 s limit and the reply was a continue / wrap up prompt. It is the only row "
-            f"failing tool_annotated_title_exact ({frac(TOOL_COL)}). There were no endpoint errors or unfinished approval "
-            f"loops. None of the {len(NO_FILE)} notices with no saved SRU response called a tool or asked for SRU XML. "
-            f"Of the {n_fab} no_fabrication failures, {n_fab - 1} are judge errors and one is the timeout; the "
-            f"{len(CORR_FAIL)} correctness failures are one judge error (S4 row 17) and the timeout."),
+          p("All four exact-title failures (S1 rows 34 and 40, S4 rows 4 and 29) come from a limitation of the "
+            "Supervisor Agent: it cannot output the curly apostrophe (U+2019) and writes a straight one. The tool result "
+            f"has the exact catalog title on every row ({frac(TOOL_COL)}, tool_annotated_title_exact). There were no "
+            "endpoint errors, timeouts or unfinished approval loops. S4 row 25 is now labelled 'no correction in Alma - "
+            f"original only'. None of the {len(NO_FILE)} notices with no saved SRU response called a tool or asked for "
+            f"SRU XML. All {n_fab} no_fabrication failures and both correctness failures are judge errors."),
           p(f"Traces are stored in Unity Catalog ({TRACE_TABLES}) with the agent's own trace attached to each request "
             f"(section 6): {len(t_tools)} tool calls with {t_tool_err} errors, and {int(t_in.sum() + t_out.sum()):,} "
             f"tokens for the {N} requests."),
@@ -301,6 +303,7 @@ story += [p("4. Method", H1),
 
 # 5. Results
 r1, r4 = r[S1], r[S4]
+p1, p4 = pre[pre["sample"] == 1], pre[pre["sample"] == 4]
 by_case = r.groupby("case").agg(rows=("row_num", "size"), title=("annotated_title_exact", "sum"),
                                 note=("erratum_note_exact", "sum"), correct=("correctness", "sum"),
                                 lat=("latency_s", "median")).reindex(list(CASE_DESC))
@@ -318,28 +321,31 @@ story += [p("5. Results", H1), p("5.1 By case", H2),
                 [[L(n), C(n), t] for n, t in sorted(CORR_FAIL.items())], [0.5, 1.4, 4.6]),
           Spacer(1, 6),
           p(f"<b>no_fabrication</b> {frac('no_fabrication')} (Sample 1 {F('no_fabrication', 1)}, Sample 4 "
-            f"{F('no_fabrication', 4)}). Reading the {n_fab} rationales: {n_fab - 1} are judge errors and one is the "
-            "timeout. The deterministic scorers found no invented title, note or MMS ID."),
+            f"{F('no_fabrication', 4)}). Reading the {n_fab} rationales: all are judge errors. The deterministic "
+            "scorers found no invented title, note or MMS ID. The same judge failed 14 rows in the previous 82-row run, "
+            "mostly different ones, so its result varies from run to run."),
           table([["Group", "Rows"]] + [[g, ", ".join(L(n) for n in rows)] for g, rows in FAB_GROUPS], [4.6, 1.9]),
           p(", ".join(L(n) for n in NO_ANN) + " pass the deterministic scorers only because they give no annotation; "
-            "the deterministic scorers do not check that the reply explains why. S4 row 25's reply explains it but "
-            "labels the status 'No original in Alma - correction notice only'; the case is no_correction (section 7).",
+            "the deterministic scorers do not check that the reply explains why. The report checks the status label: S4 "
+            "row 25 says 'no correction in Alma - original only', and the " + str(len(NO_ORIG_LABEL)) + " no-original rows "
+            "say 'no original in Alma'.",
             SMALL),
           p("5.4 Compared with earlier runs", H2),
-          table([["Scorer", "Nov. 21", "Nov. 22, no agent trace", "Nov. 22, traces in UC", "This run: Sample 1", "This run: Sample 4"]] +
-                [[k] + [f"{int(d.loc[m(d), k].astype(str).eq('True').sum())}/{int(m(d).sum())}" for d in (prev, base, uc, r1, r4)]
+          table([["Scorer", "Nov. 21", "Nov. 22, UC traces", "Before rule: S1", "Before rule: S4", "This run: S1", "This run: S4"]] +
+                [[k] + [f"{int(d.loc[m(d), k].astype(str).eq('True').sum())}/{int(m(d).sum())}" for d in (prev, uc, p1, p4, r1, r4)]
                  for k, m in [("annotated_title_exact", lambda d: d.index == d.index),
                               ("erratum_note_exact", lambda d: d.index == d.index),
                               ("original_mms_id_match", lambda d: d["case"].isin(["annotated", "already_annotated", "file_but_no_correction"])),
                               ("called_tool", lambda d: ~d["case"].isin(["manual_review", "no_file_no_original"])),
                               ("correctness", lambda d: d.index == d.index),
                               ("no_fabrication", lambda d: d.index == d.index)]] +
-                [["Median latency"] + [f"{d.latency_s.median():.1f} s" for d in (prev, base, uc, r1, r4)]],
-                [1.6, 0.8, 1.1, 1.0, 1.0, 1.0]),
+                [["Median latency"] + [f"{d.latency_s.median():.1f} s" for d in (prev, uc, p1, p4, r1, r4)]],
+                [1.5, 0.8, 0.95, 0.95, 0.95, 0.9, 0.9]),
           p("The November 21 run was scored against the ground truth before row 41's change (one expected note); "
-            "both November 22 runs use the updated ground truth. Between November 21 and 22, mcp-erratum-note returns "
-            "a blank annotated_title when the response has no original or no correction record. The first three runs "
-            "are Sample 1 only.", SMALL)]
+            "all November 22 runs use the updated ground truth. Between November 21 and 22, mcp-erratum-note returns "
+            "a blank annotated_title when the response has no original or no correction record. The first two runs are "
+            "Sample 1 only. 'Before rule' is the 82-row run before the no_correction instruction rule (run "
+            "bright-wolf-355; S4 row 26 timed out at 290 s there).", SMALL)]
 
 # 6. Latency and tool use
 tools = r["tools"].replace("", "(none)").value_counts()
@@ -351,7 +357,7 @@ story += [p("6. Latency, tool calls and token usage", H1),
                                                   f"p95 {pct(t_lat, 95):.1f} s, p99 {pct(t_lat, 99):.1f} s, max {t_lat.max():.1f} s"],
                  ["Rows with an SRU file", f"median {r.loc[has_file, 'latency_s'].median():.1f} s (one tool call, one approval)"],
                  ["Rows without an SRU file", f"median {r.loc[~has_file, 'latency_s'].median():.1f} s (no tool call)"],
-                 ["Slowest row", f"{L(int(r.loc[lat.idxmax(), 'row_num']))}: {lat.max():.1f} s (agent timeout at the 290 s limit)"],
+                 ["Slowest row", f"{L(int(r.loc[lat.idxmax(), 'row_num']))}: {lat.max():.1f} s (reply " + ("passes" if r.loc[lat.idxmax(), "annotated_title_exact"] else "fails") + " annotated_title_exact)"],
                  ["Endpoint errors / truncated loops", f"{int((r.error != '').sum())} / {int(r.truncated.sum())}"],
                  ["Tool calls (TOOL spans)", ", ".join(f"{k} {v}" for k, v in t_tool_names.items())
                   + f"; {t_tool_err} errors; p50 {pct(t_tool_ms, 50):.0f} ms, p95 {pct(t_tool_ms, 95):.0f} ms, "
@@ -373,22 +379,22 @@ story += [p("7. Findings and recommendations", H1),
               "<b>Take the catalog title from the tool result, not the reply.</b> The Supervisor Agent cannot output the "
               "curly apostrophe U+2019: given d\u2019I in a plain message, it reports the character as U+0027. A stronger "
               "instruction (worked example, character check, title in a code block) gave 0 of 6 exact on rows 34 and 40, "
-              "so it was reverted. Sample 4 rows 4 and 29 fail the same way. The tool's annotated_title is exact on every "
-              "row that finished; librarians should copy it from the tool result, and tool_annotated_title_exact scores it.",
+              "so it was reverted. Sample 4 rows 4 and 29 fail the same way. The tool's annotated_title is exact on all "
+              f"{N} rows; librarians should copy it from the tool result, and tool_annotated_title_exact scores it.",
               "<b>Two corrections in one original work end to end.</b> S1 row 41 and S4 row 4 carry both notes in date "
               "order; row 41 passes both exact scorers, and S4 row 4 fails the title only on the apostrophe.",
               f"<b>No SRU file.</b> None of the {len(NO_FILE)} no-file replies calls a tool or asks for XML. "
               + ", ".join(L(n) for n in MANUAL_ROWS) + " say the notice needs manual review; "
               + " and ".join(L(n) for n in NO_ORIG_ROWS) + ", whose requests pass on the librarian's Alma search result, "
               "say the original is not in Alma.",
-              "<b>Teach the agent the no_correction status.</b> S4 row 25 (only the original in Alma) gets the right "
-              "answer, no annotated title and manual review, but the reply labels it 'No original in Alma - correction "
-              "notice only'. The agent's instructions should name the no_correction case.",
-              f"<b>Watch latency and cost.</b> p95 {pct(t_lat, 95):.1f} s, max {t_lat.max():.1f} s. One request (S4 row "
-              "26) reached the Supervisor Agent's 290 s limit; re-run it to see whether it repeats. Each request uses "
-              f"about {int(np.median(t_in)):,} input tokens, mostly the agent's instructions and context.",
-              f"<b>Replace or ground the no_fabrication judge.</b> {n_fab - 1} of its {n_fab} failures here are judge "
-              "errors, most of them the same MMS ID mistake. Either pass the tool outputs to the judge as context, or use "
+              "<b>no_correction status: done.</b> S4 row 25 (only the original in Alma) used to be labelled 'No original "
+              "in Alma'. A new instruction rule gives the label 'no correction in Alma - original only'; in this run row 25 "
+              "uses it and the no-original rows keep theirs (section 10).",
+              f"<b>Watch latency and cost.</b> p95 {pct(t_lat, 95):.1f} s, max {t_lat.max():.1f} s, no timeouts. The "
+              "previous run's 290 s timeout on S4 row 26 did not repeat (about 13 s in 3 manual re-runs and in this run). "
+              f"Each request uses about {int(np.median(t_in)):,} input tokens, mostly the agent's instructions and context.",
+              f"<b>Replace or ground the no_fabrication judge.</b> All {n_fab} of its failures here are judge errors, "
+              "most of them the same MMS ID mistake, and they change from run to run. Either pass the tool outputs to the judge as context, or use "
               "a deterministic check that every MMS ID and DOI in the reply appears in a tool output.",
               "<b>Make Sample 4 independent.</b> Its expected titles were approved as drafted from the tool output. A "
               "record-by-record librarian check against Alma would let Sample 4 test the tool, not only the agent. "
@@ -498,6 +504,10 @@ story += [p("10. Changes since the November 21 run", H1),
               f"<b>Sample 4 added.</b> {N4} rows (2 to 30), expected titles approved as drafted on November 22, 2026 "
               f"(section 3). process_sru_response gives the expected title on {s4_ok}/{s4_n} Sample 4 rows with a saved "
               "response, as it must, since the titles were drafted from it.",
+              "<b>no_correction instruction rule.</b> The agent's instructions now say: when status is no_correction "
+              "(original_id set, no correction record; for the UC function, num_corrections 0), report 'no correction in "
+              "Alma - original only', give both MMS IDs, say it needs manual review and give no annotated title. Checked "
+              "before this run: S4 row 25 3 of 3, and 7 regression rows pass.",
               "<b>Traces in Unity Catalog.</b> The evaluation now writes to the experiment "
               f"{runs['experiment']} (id {runs['experiment_id']}), bound to {TRACE_TABLES}. The earlier experiment keeps "
               "the November 20 to 22 runs.",
@@ -538,7 +548,7 @@ checks = ["1. Summary", "2. System under test", "3. Evaluation dataset", "4. Met
           "10. Changes since the November 21 run", "10.1007/s00018-025-05953-w", "10.3897/mycokeys.124.171105",
           f"{now_ok}/{now_n}", "before-20261122", "agent_erratum_eval_otel", f"{int(t_in.sum() + t_out.sum()):,}",
           f"{len(t_tools)} tool calls", "no_correction", "Sample 4", "Correction-Sample4-29-annotated", "approved as drafted",
-          "file_but_no_correction", "290 s", "S4 row 26", "S4 row 25", F("annotated_title_exact", 4), f"{s4_ok}/{s4_n}"]
+          "file_but_no_correction", "no correction in Alma - original only", "Before rule: S4", "S4 row 26", "S4 row 25", F("annotated_title_exact", 4), f"{s4_ok}/{s4_n}"]
 missing = [c for c in checks if c not in flat]
 for c in checks:
     print("OK  " if c not in missing else "MISSING  ", c)
