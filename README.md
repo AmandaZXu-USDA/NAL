@@ -499,6 +499,11 @@ The two projects deploy independently: neither deploy touches the other app, age
 | App service principal gets | `CAN_QUERY` on `mas-c8629507-endpoint`, `CAN_USE` on the SQL warehouse, `EXECUTE` on `build_sru_url` and on the model service, `CAN_EDIT` on the experiment, `MODIFY` on the trace tables | `READ VOLUME` on `users.amanda_xu.erratum_files` only |
 | Check after deploy | [`sru-syntax-mcp/eval/databricks/nb-apps-mcp-testing-amandaxu.py`](sru-syntax-mcp/eval/databricks/nb-apps-mcp-testing-amandaxu.py) | `erratum-annotator/eval/databricks/mcp-erratum-note Inspector Gadget Test` (expect 0 errors, 46/48, 48/48) |
 
+* **`mcp-sru-syntax` is deployed from the hackathon repo.** Since 2026-11-22 the app (and the daily
+  `check_live` job) are managed by the `prod` target of the bundle in AmandaZXu-USDA/mcp-hackathon-demo-sru, which
+  runs the same files as `sru-syntax-mcp/mcp_server/` here (see that repo's `deploy/databricks/README.md`). The
+  app is still bound to this repo's bundle (`dev`) too: deploy it from one bundle only, or unbind it from the
+  other first, or each deploy overwrites the other.
 * **Update in place, never recreate.** The workspace is at its 100-app limit and both apps already exist. Run
   `databricks bundle validate` first; if the bundle state does not track `mcp-sru-syntax`, bind it
   (`bundle deployment bind`) instead of creating it. Never rename the bundle resource key `sru_syntax_mcp`
