@@ -7,5 +7,6 @@
 | [`results/`](results/README.md) | Committed evidence: run records, the demo replay and `INDEX.json` hashes |
 | [`demo/RUNBOOK.md`](demo/RUNBOOK.md) | Live demo script, with expected results and what to do if something goes wrong |
 | [`usability/`](usability/HEURISTIC_REVIEW_2026-11-21.md) | Expert walkthrough of the librarian tasks and the protocol for librarian sessions |
+| [`phoenix/`](phoenix/README.md) | Phoenix harness (mcp-eval skill) for `mcp-sru-syntax`; mirrors the fork and runs from the fork, which has `src/sru_server` (stdio) and the dev dependencies |
 | [`../sru-syntax-mcp/eval/databricks/`](../sru-syntax-mcp/eval/databricks/README.md) | `agent-sru-syntax` MLflow evaluation |
 | [`../erratum-annotator/eval/databricks/`](../erratum-annotator/eval/databricks/README.md) | `agent-erratum-annotator` MLflow evaluation |
