@@ -5,7 +5,7 @@
 # MAGIC
 # MAGIC Evaluates the Supervisor Agent **agent-erratum-annotator** (endpoint `mas-c341c0aa-endpoint`; traces in Unity Catalog `users.amanda_xu.agent_erratum_eval_otel_*`, with the agent's own spans attached; tools: MCP app `mcp-erratum-note` + UC function `users.amanda_xu.process_sru_response`) with `mlflow.genai.evaluate`.
 # MAGIC
-# MAGIC **Ground truth:** `/Volumes/users/amanda_xu/erratum_files/Correction-Sample1-53-annotated.csv` (53 rows, librarian-checked). Saved SRU responses: `.../erratum_files/sru_responses/` (48 files).
+# MAGIC **Ground truth:** `/Volumes/users/amanda_xu/erratum_files/Correction-Sample1-53-annotated.csv` (53 rows, librarian-checked) and `Correction-Sample4-29-annotated.csv` (29 rows, drafted from the tool output and approved as drafted on 2026-11-22; row_num 400 + n). Saved SRU responses: `.../erratum_files/sru_responses/` (48 files).
 # MAGIC
 # MAGIC **Each row** is a request a librarian would send: the correction notice title, its erratum MMS ID and, when saved, the SRU response file name. The agent should return the original article title with the erratum note appended, or say why it cannot (no original in Alma, bare "Correction" title).
 # MAGIC
@@ -42,6 +42,9 @@ EXPERIMENT_PATH = "/Users/amanda.xu@usda.gov/agent-erratum-annotator-eval-uc"  #
 TRACE_CATALOG, TRACE_SCHEMA, TRACE_PREFIX = "users", "amanda_xu", "agent_erratum_eval"
 os.environ.setdefault("MLFLOW_TRACING_SQL_WAREHOUSE_ID", "50d2bd4ddf65e0f5")  # Serverless Starter Warehouse
 GROUND_TRUTH = "/Volumes/users/amanda_xu/erratum_files/Correction-Sample1-53-annotated.csv"
+# Sample 4 (29 rows, 2 to 30): drafted from the tool output, approved as drafted by the project owner on 2026-11-22.
+GROUND_TRUTH_S4 = "/Volumes/users/amanda_xu/erratum_files/Correction-Sample4-29-annotated.csv"
+S4_OFFSET = 400  # Sample 4 row n is row_num 400 + n, so row numbers stay unique integers
 SRU_DIR = "/Volumes/users/amanda_xu/erratum_files/sru_responses"
 MAX_ROWS = None  # e.g. 10 for a quick run
 os.environ.setdefault("MLFLOW_GENAI_EVAL_MAX_WORKERS", "3")  # keep load on the agent low
@@ -61,6 +64,14 @@ def _unexcel(v: str) -> str:
 
 
 gt = pd.read_csv(GROUND_TRUTH, encoding="utf-8-sig", dtype=str, keep_default_na=False)
+gt["sample"] = "1"
+gt4 = pd.read_csv(GROUND_TRUTH_S4, encoding="utf-8-sig", dtype=str, keep_default_na=False)
+assert (gt4["librarian_decision"].str.strip() != "").all(), "Sample 4 has rows without a librarian decision"
+gt4["annotated_title"] = gt4["librarian_corrected_title"].where(gt4["librarian_corrected_title"].str.strip() != "",
+                                                              gt4["annotated_title"])
+gt4["sample"] = "4"
+gt = pd.concat([gt, gt4[gt.columns.drop("sample").tolist() + ["sample", "sru_response_file"]]], ignore_index=True)
+gt["sru_response_file"] = gt["sru_response_file"].fillna("")
 for c in ("erratum_mms_id", "original_mms_id"):
     gt[c] = gt[c].map(_unexcel)
 
@@ -73,8 +84,9 @@ for f in os.listdir(SRU_DIR):
 
 
 def build_row(r) -> dict:
-    n = int(r.row_num)
-    f = sru_files.get(n, "")
+    s4 = r.sample == "4"
+    n = int(r.row_num) + (S4_OFFSET if s4 else 0)
+    f = r.sru_response_file if s4 else sru_files.get(n, "")
     expected = r.annotated_title.strip()
     status = r.erratum_status.strip()
     request = (f'Annotate the original article title for the correction notice "{r.erratum_title}" '
@@ -95,7 +107,14 @@ def build_row(r) -> dict:
             facts.append("The original title already carried an erratum note, so no second note was added")
     elif "manual" in status:
         case = "manual_review"
-        facts = ["No annotated title is given: the notice is a generic 'Correction' title that needs manual review"]
+        facts = ["No annotated title is given: the notice is a generic 'Correction' title that needs manual review"
+                 if "generic" in status else
+                 "No annotated title is given: no SRU response is saved for this notice, so it needs manual review"]
+    elif f and status.startswith("no correction"):
+        # Sample 4 row 25: the SRU file has only the original article; the correction notice is not in Alma.
+        case = "file_but_no_correction"
+        facts = ["No annotated title is given: the SRU response has the original article but not the correction "
+                 "notice, so there is no erratum note to add and the notice needs manual review"]
     elif f:
         # Rows 4 and 24: the SRU file has only the correction record. The librarian ground truth is blank,
         # so a search_title fallback presented as the annotated original title is a failure.
@@ -114,16 +133,19 @@ def build_row(r) -> dict:
             "has_sru_file": bool(f),
             "expected_facts": facts,
         },
-        "tags": {"row_num": str(n), "erratum_status": status, "has_sru_file": str(bool(f)), "case": case},
+        "tags": {"row_num": str(n), "sample": r.sample, "sample_row": str(r.row_num), "erratum_status": status,
+                 "has_sru_file": str(bool(f)), "case": case},
     }
 
 
 eval_dataset = [build_row(r) for r in gt.itertuples(index=False)]
+assert len({r["inputs"]["request"] for r in eval_dataset}) == len(eval_dataset), "requests must be unique"
+assert all(os.path.exists(f"{SRU_DIR}/{f}") for f in gt.loc[gt["sample"] == "4", "sru_response_file"] if f)
 if MAX_ROWS:
     eval_dataset = eval_dataset[:MAX_ROWS]
 
 print(f"{len(eval_dataset)} rows; {sum(r['expectations']['has_sru_file'] for r in eval_dataset)} with an SRU file")
-print(gt["erratum_status"].value_counts().to_string())
+print(gt.groupby(["sample", "erratum_status"]).size().to_string())
 print(pd.Series([r["tags"]["case"] for r in eval_dataset]).value_counts().to_string())
 display(pd.DataFrame([{**r["tags"], "request": r["inputs"]["request"],
                        "expected_annotated_title": r["expectations"]["expected_annotated_title"]}
@@ -425,7 +447,8 @@ def predict(request: str) -> dict:
 
 # DBTITLE 1,Smoke test on 3 rows
 # Rows 43 and 41 were annotated from the SRU file; row 4 has a file but no original in Alma.
-smoke = [r for r in eval_dataset if r["tags"]["row_num"] in {"43", "41", "4"}]
+# Sample 4 rows 4 (two corrections, row_num 404) and 25 (no correction in Alma, row_num 425).
+smoke = [r for r in eval_dataset if r["tags"]["row_num"] in {"43", "41", "4", "404", "425"}]
 smoke_results = mlflow.genai.evaluate(data=smoke, predict_fn=predict, scorers=SCORERS)
 print(smoke_results.metrics)
 
@@ -548,7 +571,7 @@ display(bad[["row_num", "case", rd_val("annotated_title_exact"), rat("annotated_
 import json, os
 
 RESULTS_DIR = "/Workspace/Users/amanda.xu@usda.gov/erratum-annotator/eval/doc"
-RUN_TAG = "20261122-uc"  # date of the run; earlier runs' files (e.g. 20261120) are kept
+RUN_TAG = "20261122-s4"  # date of the run; earlier runs' files (e.g. 20261120) are kept
 os.makedirs(RESULTS_DIR, exist_ok=True)
 
 rs = rd.set_index("row_num")
@@ -570,6 +593,8 @@ out = pd.DataFrame({
     "expected_annotated_title": df["row_num"].map(lambda n: exp_by_row[n]["expected_annotated_title"]),
     "reply": df["reply"].str.slice(0, 2000),
 }).sort_values("row_num")
+out.insert(1, "sample", (out["row_num"] >= S4_OFFSET).map({True: 4, False: 1}))
+out.insert(2, "sample_row", out["row_num"] % S4_OFFSET)
 
 csv_path = f"{RESULTS_DIR}/agent-erratum-annotator-eval-results-{RUN_TAG}.csv"
 out.to_csv(csv_path, index=False)
