@@ -43,20 +43,18 @@ The app gets these through `valueFrom` in `mcp_server/app.yaml`:
 
 ## Deploy
 
-Run from this folder (the bundle root):
+The live `mcp-sru-syntax` app is deployed from the `prod` target of the bundle in
+AmandaZXu-USDA/mcp-hackathon-demo-sru, not from this folder. Since 2026-11-22 this bundle
+does not manage the app (it was unbound), so only one bundle can change it. To ship a
+change: edit `mcp_server/` here, copy it with `scripts/sync_to_fork.py`, then in the
+hackathon repo run `databricks bundle validate --strict -t prod`,
+`databricks bundle deploy -t prod` and `databricks bundle run sru_syntax_mcp -t prod`
+(see its `deploy/databricks/README.md`).
 
-```bash
-databricks bundle validate --strict -t dev
-
-# Only if this bundle does not track the app yet (e.g. a different user or a fresh bundle state):
-# the mcp-sru-syntax app already exists, so bind it instead of creating it
-databricks bundle deployment bind sru_syntax_mcp mcp-sru-syntax -t dev
-
-databricks bundle deploy -t dev
-databricks bundle run sru_syntax_mcp -t dev
-```
-
-Override any variable with `--var`, for example `--var model_service=models.ai.gpt-5-6-sol`.
+Do not bind `sru_syntax_mcp` here again, and do not `bundle deploy` this bundle: with no
+binding it would try to create a second `mcp-sru-syntax` app and fail (the name is taken
+and the workspace is at its 100-app limit). `databricks bundle validate --strict -t dev`
+is still a useful check of the app definition.
 
 ## Test the agent
 

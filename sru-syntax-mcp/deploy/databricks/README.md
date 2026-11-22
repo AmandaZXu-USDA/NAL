@@ -131,10 +131,12 @@ The `databricks.yml` bundle defines one app (`sru_syntax_mcp`) that hosts both t
 MCP server (`/mcp`) and the SRU syntax agent (`/invocations`, `/responses`).
 The workspace is at its 100-app limit, so the agent shares this app.
 
-> **Since 2026-11-22 the live app is deployed from the `prod` target of the bundle in
-> AmandaZXu-USDA/mcp-hackathon-demo-sru** (same files as `mcp_server/` here). The app is
-> still bound to this bundle's `dev` state too, so deploy it from one bundle only, or
-> unbind it from the other first (`databricks bundle deployment unbind sru_syntax_mcp`).
+> **Since 2026-11-22 the live app is deployed only from the `prod` target of the bundle in
+> AmandaZXu-USDA/mcp-hackathon-demo-sru** (same files as `mcp_server/` here), and this
+> bundle no longer manages it (`sru_syntax_mcp` was unbound from `dev`). Do not run the
+> bind and deploy steps below for the live app: develop here, copy the change with
+> `scripts/sync_to_fork.py`, and deploy the hackathon repo's `prod` target. The steps
+> below are kept for reference (how the app was first deployed from this bundle).
 
 Run from the `sru-syntax-mcp/` folder (the bundle root):
 
