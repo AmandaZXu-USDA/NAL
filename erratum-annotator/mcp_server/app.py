@@ -475,14 +475,13 @@ def _status(result: dict) -> str:
 def _explain(xml: str, search_title: str, correction_id: str) -> dict:
     """Annotate, and add the correction and original records so the page can show before and after."""
     started = time.perf_counter()
-    result = _process(xml, search_title, correction_id)
+    result = _with_status(_process(xml, search_title, correction_id), correction_id)
     elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
     recs = {r.record_id: r for r in _parse(xml)}
     corr = recs.get(str(result.get("correction_id") or ""))
     orig = recs.get(str(result.get("original_id") or ""))
     return {
         **result,
-        "status": _status(result),
         "elapsed_ms": elapsed_ms,
         "correction_title": corr.title if corr else "",
         "original_title": orig.title if orig else "",
@@ -760,6 +759,7 @@ DEMO_PAGE = """<!doctype html>
       steps.append(step("Annotated title for the original record", annotated(d.annotated_title, d.erratum_note), actions, "final"));
     }
     card.append(steps);
+    (d.warnings || []).forEach(function (w) { card.append(el("p", "meta", "Note: " + w)); });
     card.append(el("p", "meta", "Done in " + d.elapsed_ms + " ms by the same code as the MCP server and the SQL function. Records in this response: "
       + d.num_records + " (" + d.num_corrections + " correction" + (d.num_corrections === 1 ? "" : "s") + ")."));
     out.append(card);
