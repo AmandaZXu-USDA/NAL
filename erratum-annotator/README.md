@@ -13,7 +13,9 @@ How the annotated title is built depends on what the SRU response holds:
 | One correction, one original | 1 correction record + 1 original article | `<original title> [Erratum: ...]` | Sample 4, rows 2, 3, 5, 6, 8, 9 and 10 |
 | **Two corrections in one original title** | 2 or more correction records of the **same** original article + 1 original article | `<original title> [Erratum: A] [Erratum: B]`: every correction's note, ordered by date (year, month, day), then volume, issue and page | Sample 4, row 4; Sample 1, row 41 |
 | Already annotated | An original whose title already contains `[Erratum:` | Unchanged | Sample 1; Sample 4, row 7 |
-| No original in Alma | Only the correction record | The correction notice only; no annotated original (status `no_original`) | Sample 1, rows 4 and 24 |
+| No original in Alma | Only the correction record | Blank (`""`): no original record to annotate (status `no_original`) | Sample 1, rows 4 and 24; Sample 4, rows 14, 15 and 17 |
+| **No correction in Alma** | Only the original article (the correction notice is not catalogued) | Blank (`""`): no erratum note to add (status `no_correction`, with a manual-review warning) | Sample 4, row 25 |
+| No SRU response | Nothing: the row's title only carries a correction keyword (erratum, addendum, ERRATA) | Not processed: **manual review** | Sample 4, rows 16, 19, 20 and 22 |
 
 The original title is the MODS main title (`titleInfo` without a `type`) with its `nonSort` and `subTitle`. A
 parallel title keeps its `=` (Sample 4, row 10: `MÚLT-JELEN-JÖVŐ ... = PAST-PRESENT-FUTURE in Hungarian soil analyses`);
