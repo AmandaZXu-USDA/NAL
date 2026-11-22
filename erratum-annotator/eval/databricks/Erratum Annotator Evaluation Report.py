@@ -323,6 +323,60 @@ story += [p("9. Artifacts and reproduction", H1),
           p("To reproduce: run the evaluation notebook top to bottom (cells 2 to 4 need no agent calls), then this "
             "notebook. The rescore cell reapplies the deterministic scorers to saved replies.", SMALL)]
 
+# 10. Update, November 22, 2026: two corrections in one original title (computed from the current code and files)
+import importlib.util, os, sys as _sys
+_ANN = "/Workspace/Users/amanda.xu@usda.gov/NAL/erratum-annotator/mcp_server/erratum_annotator.py"
+_spec = importlib.util.spec_from_file_location("erratum_annotator_now", _ANN)
+ea_now = importlib.util.module_from_spec(_spec); _spec.loader.exec_module(ea_now)
+SRU_DIR = "/Volumes/users/amanda_xu/erratum_files/sru_responses"
+GT_CSV = "/Volumes/users/amanda_xu/erratum_files/Correction-Sample1-53-annotated.csv"
+_xml = lambda f: open(f"{SRU_DIR}/{f}", encoding="utf-8-sig").read()
+TWO = [("Sample 4, row 4", "Sample4-Row4-9917012079207426-TwoCorrectionsInOneOriginalTitle.xml", "9917012079207426"),
+       ("Sample 1, row 41", "Sample1-Row41-9917175655407426.xml", "9917175655407426")]
+two = {lab: ea_now.process_sru_response(_xml(f), "", cid) for lab, f, cid in TWO}
+assert all(len(v["erratum_notes"]) == 2 for v in two.values()), "two-note rule changed"
+gt_now = pd.read_csv(GT_CSV, encoding="utf-8-sig", dtype=str, keep_default_na=False)
+_strip = lambda s: s[2:-1] if s.startswith('="') else s
+now_ok, now_diff, now_n = 0, [], 0
+for _, g in gt_now.iterrows():
+    _cid = _strip(g.erratum_mms_id); _f = f"Sample1-Row{g.row_num}-{_cid}.xml"
+    if not os.path.exists(f"{SRU_DIR}/{_f}"):
+        continue
+    now_n += 1
+    if ea_now.process_sru_response(_xml(_f), "", _cid)["annotated_title"] == g.annotated_title:
+        now_ok += 1
+    else:
+        now_diff.append(int(g.row_num))
+assert now_diff == [4, 24], f"tool vs updated ground truth changed: {now_diff}"
+assert gt_now.loc[gt_now.row_num == "41", "annotated_title"].item() == two["Sample 1, row 41"]["annotated_title"]
+reply41 = r.loc[r.row_num == 41, "reply"].iloc[0]
+assert reply41.count("[Erratum:") == 1 and "mycokeys.124.171105" not in reply41
+n_saved = len([f for f in os.listdir(SRU_DIR) if f.endswith(".xml")])
+story += [p("10. Update, November 22, 2026: two corrections in one original title", H1),
+          p("New rule from the project owner: when an SRU response holds two or more correction records of one original "
+            "article, every correction's erratum note goes into the single original title, ordered by date (year, month, "
+            "day), then volume, issue and page. mcp-erratum-note, the UC function process_sru_response and the "
+            "offline demo use it since November 22, 2026. Of the saved responses, two have this case:"),
+          table([["Notice", "Notes appended, in order"]] +
+                [[lab, "  ".join(v["erratum_notes"])] for lab, v in two.items()], [1.3, 5.2], code_cols=(1,)),
+          Spacer(1, 4),
+          *bullets([
+              "<b>Ground truth changed for row 41.</b> Its expected annotated title in Correction-Sample1-53-annotated "
+              "now carries both notes (Nov. 13, 2025, then June 18, 2026). The previous files are kept as "
+              "Correction-Sample1-53-annotated-before-20261122.csv and .xlsx.",
+              "<b>Sections 1 to 9 are scored against the ground truth of November 21.</b> The agent's November 21 reply "
+              "for row 41 has only the June 18, 2026 note, so against the updated ground truth row 41 would fail "
+              "annotated_title_exact and erratum_note_exact. The agent has not been re-run since the rule change.",
+              f"<b>Tool check against the updated ground truth.</b> process_sru_response, run now on the {now_n} Sample1 "
+              f"rows with a saved response, gives the expected annotated title on {now_ok}/{now_n}; the differences are "
+              f"rows {now_diff[0]} and {now_diff[1]}, as in section 8 (no original in Alma).",
+              f"<b>Saved responses.</b> {n_saved} files, now including Sample 4 rows 2 to 5. On November 22 the live "
+              f"mcp-erratum-note app (process_sru_file, as Inspector Gadget) returned the same annotated title as the "
+              f"code for all {n_saved}.",
+              "<b>Recommendation.</b> Re-run the agent evaluation with the updated ground truth and add Sample 4 row 4 "
+              "to the dataset as the second two-corrections case.",
+          ])]
+
 
 def _footer(canvas, doc):
     canvas.saveState()
@@ -354,7 +408,9 @@ checks = ["1. Summary", "2. System under test", "3. Evaluation dataset", "4. Met
           frac("annotated_title_exact"), frac("erratum_note_exact"), frac("original_mms_id_match"), frac("called_tool"),
           frac("correctness"), frac("no_fabrication"), runs["full_run_id"], runs["rescore_run_id"], runs["experiment_id"],
           runs["endpoint"], "U+2019", "48 to 50/53", "40 to 52/53", f"max {lat.max():.1f} s",
-          "5.4 Compared with the November 20 run", "November 21, 2026", "row 13", "tool_annotated_title_exact", "U+0027"]
+          "5.4 Compared with the November 20 run", "November 21, 2026", "row 13", "tool_annotated_title_exact", "U+0027",
+          "10. Update, November 22, 2026", "10.1007/s00018-025-05953-w", "10.3897/mycokeys.124.171105",
+          f"{now_ok}/{now_n}", "before-20261122"]
 missing = [c for c in checks if c not in flat]
 for c in checks:
     print("OK  " if c not in missing else "MISSING  ", c)
