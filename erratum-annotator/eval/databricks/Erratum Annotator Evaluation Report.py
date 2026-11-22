@@ -1,6 +1,6 @@
 # Databricks notebook source
 # DBTITLE 1,Install PDF libraries
-# MAGIC %pip install -q reportlab pypdf
+# MAGIC %pip install -q reportlab pypdf "mlflow[databricks]>=3.4"
 # MAGIC dbutils.library.restartPython()
 
 # COMMAND ----------
@@ -10,11 +10,16 @@ import json
 import pandas as pd
 
 DOC = "/Workspace/Users/amanda.xu@usda.gov/NAL/erratum-annotator/eval/databricks/doc"
-RESULTS_CSV = f"{DOC}/agent-erratum-annotator-eval-results-20261121.csv"
-PREV_CSV = f"{DOC}/agent-erratum-annotator-eval-results-20261120.csv"  # November 20 run, for comparison
-RUNS_JSON = f"{DOC}/agent-erratum-annotator-eval-runs-20261121.json"
+RESULTS_CSV = f"{DOC}/agent-erratum-annotator-eval-results-20261122-uc.csv"  # run with traces in Unity Catalog
+PREV_CSV = f"{DOC}/agent-erratum-annotator-eval-results-20261121.csv"  # November 21 run, for comparison
+BASE_CSV = f"{DOC}/agent-erratum-annotator-eval-results-20261122.csv"  # same day, same scorers, no agent trace returned
+RUNS_JSON = f"{DOC}/agent-erratum-annotator-eval-runs-20261122-uc.json"
 OUTPUT_PATH = f"{DOC}/agent-erratum-annotator-evaluation-report.pdf"
-RUN_DATE = "November 21, 2026"
+RUN_DATE = "November 22, 2026"
+SRU_DIR = "/Volumes/users/amanda_xu/erratum_files/sru_responses"
+import os
+n_saved = len([f for f in os.listdir(SRU_DIR) if f.endswith(".xml")])
+base = pd.read_csv(BASE_CSV, keep_default_na=False)
 
 r = pd.read_csv(RESULTS_CSV, keep_default_na=False)
 BOOL = ["truncated", "annotated_title_exact", "erratum_note_exact", "original_mms_id_match", "called_tool",
@@ -58,6 +63,28 @@ print(N, "rows", runs)
 for k, (a, b) in M.items():
     print(f"{k:25s} {a}/{b}")
 print(r["case"].value_counts().to_dict())
+
+# Trace statistics: the full run's traces, read from Unity Catalog with the MLflow SDK (not from the tables directly).
+import mlflow
+import numpy as np
+os.environ.setdefault("MLFLOW_TRACING_SQL_WAREHOUSE_ID", "50d2bd4ddf65e0f5")
+TRACE_TABLES = "users.amanda_xu.agent_erratum_eval_otel_*"
+traces = mlflow.search_traces(locations=[runs["experiment_id"]], run_id=runs["full_run_id"], max_results=500,
+                              return_type="list")
+assert len(traces) == N, f"expected {N} traces, got {len(traces)}"
+t_lat = np.array([t.info.execution_duration for t in traces]) / 1000
+t_tok = [t.info.token_usage or {} for t in traces]
+t_in = np.array([x.get("input_tokens", 0) for x in t_tok]); t_out = np.array([x.get("output_tokens", 0) for x in t_tok])
+t_tools = [s for t in traces for s in t.data.spans if s.span_type == "TOOL"]
+t_llm = [s for t in traces for s in t.data.spans if s.span_type == "CHAT_MODEL"]
+t_tool_ms = np.array([(s.end_time_ns - s.start_time_ns) / 1e6 for s in t_tools])
+t_llm_s = np.array([(s.end_time_ns - s.start_time_ns) / 1e9 for s in t_llm])
+t_tool_err = sum(s.status.status_code.value == "ERROR" for s in t_tools)
+t_states = pd.Series([t.info.state.value for t in traces]).value_counts().to_dict()
+t_tool_names = pd.Series([s.name for s in t_tools]).value_counts().to_dict()
+pct = lambda a, q: float(np.percentile(a, q))
+print(len(traces), "traces", t_states, "tools", t_tool_names, "errors", t_tool_err, "LLM spans", len(t_llm),
+      "tokens", int(t_in.sum()), int(t_out.sum()))
 
 # COMMAND ----------
 
@@ -115,18 +142,25 @@ assert set(rows_of(~r.annotated_title_exact | ~r.erratum_note_exact | ~r.origina
     "Deterministic failures changed: update DET_FAIL"
 CORR_FAIL = {
     4: "Judge error: the reply says Alma has only the correction notice and gives no annotated title, as expected; the judge "
-       "failed it because the tool output names search_title as the lookup source.",
-    9: "No SRU file: the reply says no annotated title can be produced and does not ask for XML. The expected facts say the "
-       "original is not in Alma, which the agent cannot know: the request only says no SRU response is saved.",
+       "failed it because the reply does not also say that it gives no search_title fallback.",
 }
 assert set(rows_of(~r.correctness)) == set(CORR_FAIL), "Correctness failures changed: update CORR_FAIL"
 FAB_GROUPS = [
-    ("Judge error: expects the original article's MMS ID to equal the correction notice's MMS ID. The reported original "
-     "MMS ID comes from process_sru_file (original_id) and matches the ground truth.", [3, 11, 13, 18, 21, 22, 35, 42, 44, 47]),
-    ("Judge error: says the reply does not state that the title already carries a note; its first sentence says so.", [31]),
+    ("Judge error: treats the original article's MMS ID as invented because it differs from the correction notice's MMS ID "
+     "or is not in the request. It comes from process_sru_file (original_id) and matches the ground truth.",
+     [8, 42, 43, 44, 51, 52, 53]),
+    ("Judge error: objects that the reply names the article (taken from the correction notice title in the request) while "
+     "saying no annotated title can be produced. No annotation is given, as expected.", [39]),
 ]
 assert sorted(sum((g for _, g in FAB_GROUPS), [])) == rows_of(~r.no_fabrication), "no_fabrication failures changed"
 assert r.loc[r.row_num.isin(FAB_GROUPS[0][1]), "original_mms_id_match"].all()
+n_fab = int((~r.no_fabrication).sum())
+NO_FILE = rows_of(~has_file)
+assert (r.loc[~has_file, "tools"] == "").all(), "a no-file row called a tool"
+MANUAL_ROWS = rows_of(r.case == "manual_review"); NO_ORIG_ROWS = rows_of(r.case == "no_file_no_original")
+reply41 = r.loc[r.row_num == 41, "reply"].iloc[0]
+assert r.loc[r.row_num == 41, ["annotated_title_exact", "erratum_note_exact"]].all(axis=None)
+assert "mycokeys.124.171105" in reply41 and "mycokeys.134.198487" in reply41
 
 story = []
 story += [p("agent-erratum-annotator: Evaluation Report", ParagraphStyle("T", parent=H1, fontSize=18)),
@@ -134,15 +168,19 @@ story += [p("agent-erratum-annotator: Evaluation Report", ParagraphStyle("T", pa
 
 # 1. Summary
 story += [p("1. Summary", H1),
-          p(f"The agent was evaluated on all {N} rows of the librarian-checked Sample1 spreadsheet. It returned the exact "
-            f"annotated original title on {frac('annotated_title_exact')} rows and the correct original MMS ID on "
+          p(f"The agent was evaluated on all {N} rows of the librarian-checked Sample1 spreadsheet, with row 41 now "
+            "expecting two erratum notes (two corrections of one original). It returned the exact annotated original title "
+            f"on {frac('annotated_title_exact')} rows, including row 41, and the correct original MMS ID on "
             f"{frac('original_mms_id_match')} rows that have one. It used a saved-response tool on every row with an SRU "
             f"file ({frac('called_tool')}). Both exact-match failures (rows 34 and 40) come from a limitation of the "
             "Supervisor Agent: it cannot output the curly apostrophe (U+2019) and writes a straight one. The tool result "
             f"the reply is built from has the exact catalog title on every row ({frac(TOOL_COL)}, "
-            "tool_annotated_title_exact). There were no Supervisor Agent timeouts, endpoint errors or unfinished approval loops. "
-            "On the 5 notices with no saved SRU response, none asks for SRU XML: 4 replies say the notice needs manual "
-            "review and row 9 says no annotated title can be produced without one. All 11 no_fabrication failures are judge errors."),
+            "tool_annotated_title_exact). There were no endpoint errors or unfinished approval loops. "
+            f"None of the {len(NO_FILE)} notices with no saved SRU response called a tool or asked for SRU XML. "
+            f"All {n_fab} no_fabrication failures and the one correctness failure are judge errors."),
+          p(f"This run stores its traces in Unity Catalog ({TRACE_TABLES}) and attaches the agent's own trace to each "
+            f"request, so tool calls, LLM calls and token usage are measured (section 6): {len(t_tools)} tool calls with "
+            f"{t_tool_err} errors, and {int(t_in.sum() + t_out.sum()):,} tokens for the {N} requests."),
           table([["Scorer", "Kind", "Rows scored", "Result"],
                  ["annotated_title_exact (primary)", "Deterministic", "all rows", frac("annotated_title_exact")],
                  ["erratum_note_exact", "Deterministic", "all rows", frac("erratum_note_exact")],
@@ -160,7 +198,7 @@ story += [p("2. System under test", H1),
                  ["Endpoint", runs["endpoint"]],
                  ["Tools", "MCP app mcp-erratum-note (process_sru_file, list_sru_files, ...; calls need approval); "
                            "UC function users.amanda_xu.process_sru_response"],
-                 ["Saved SRU responses", "/Volumes/users/amanda_xu/erratum_files/sru_responses (48 MODS XML files)"],
+                 ["Saved SRU responses", f"/Volumes/users/amanda_xu/erratum_files/sru_responses ({n_saved} MODS XML files; the 48 Sample 1 files are in this evaluation)"],
                  ["Output format", "<original title> [Erratum: Mon. YYYY, v. V, no. N, page, DOI]; already-annotated titles unchanged"]],
                 [1.6, 4.9])]
 
@@ -187,22 +225,29 @@ story += [p("4. Method", H1),
               "mlflow.genai.evaluate with a predict function that calls the endpoint through the Responses API and "
               "auto-approves each mcp_approval_request (up to 8 rounds, 300 s client timeout, 2 retries). Only the final "
               "round's text is scored; all text and tool calls are kept for diagnosis.",
+              "Traces are stored in Unity Catalog: the experiment is bound to " + TRACE_TABLES + ". Each request asks "
+              "the endpoint to return its own trace (databricks_options.return_trace) and attaches it with "
+              "mlflow.add_trace, which adds the agent's LLM spans (with token usage) and TOOL spans.",
               "Deterministic scorers compare after removing markdown escapes, bold and backticks and collapsing "
               "whitespace. Hyphens and quote characters are not normalized, because the catalog title must be exact.",
               "annotated_title_exact: the expected title appears exactly and no other note is attached to a title. "
-              "erratum_note_exact: the note attached to the title equals the expected note. Notes restated after a "
-              "label (e.g. under Details) and placeholders such as [Erratum: ...] in prose are ignored.",
+              "erratum_note_exact: the set of notes attached to the title equals the expected notes (one, or two for "
+              "row 41). Notes restated after a label (e.g. under Details) and placeholders such as [Erratum: ...] in "
+              "prose are ignored.",
               "Before any agent call, a self-check scores the ground truth itself (must pass), plus corrupted notes, "
-              "doubled notes and markdown-formatted titles (46/46 each), and regression cases from this run.",
-              "A 3-row smoke test (rows 4, 41, 43) preceded the full run, which used 4 parallel workers.",
+              "doubled notes and markdown-formatted titles (46/46 each), and regression cases from earlier runs.",
+              "A 3-row smoke test (rows 4, 41, 43) preceded the full run (up to 3 parallel workers).",
           ]),
-          p("Scorer revisions (made during the November 20 run; unchanged since)", H2),
+          p("Scorer revisions", H2),
           *bullets([
-              "Smoke test: the first scorers counted notes, so a correct reply that restated its note in a Details list "
-              "failed (0/3). Changed to count only notes attached to a title.",
-              "Full run: 2 replies wrote '[Erratum: ...]' as a placeholder in a status sentence, and 9 already-annotated "
-              "replies listed the new correction's note under Details. Both were scored as extra notes. Fixed and "
-              "rescored from the saved replies without calling the agent: title 48 to 50/53, note 40 to 52/53.",
+              "November 20, smoke test: the first scorers counted notes, so a correct reply that restated its note in a "
+              "Details list failed (0/3). Changed to count only notes attached to a title.",
+              "November 20, full run: 2 replies wrote '[Erratum: ...]' as a placeholder in a status sentence, and 9 "
+              "already-annotated replies listed the new correction's note under Details. Both were scored as extra "
+              "notes. Fixed and rescored from the saved replies without calling the agent: title 48 to 50/53, note 40 "
+              "to 52/53.",
+              "November 22: the expected note became every note in the expected title, compared as a set, so a reply "
+              "with only one of row 41's two notes fails.",
           ])]
 
 # 5. Results
@@ -222,61 +267,77 @@ story += [p("5. Results", H1), p("5.1 By case", H2),
           table([["Row", "Case", "Reason"]] +
                 [[n, r.loc[r.row_num == n, "case"].iloc[0], t] for n, t in sorted(CORR_FAIL.items())], [0.5, 1.4, 4.6]),
           Spacer(1, 6),
-          p(f"<b>no_fabrication</b> {frac('no_fabrication')}. Reading the 11 rationales: all are judge errors. The "
+          p(f"<b>no_fabrication</b> {frac('no_fabrication')}. Reading the {n_fab} rationales: all are judge errors. The "
             "deterministic scorers found no invented title, note or MMS ID."),
           table([["Group", "Rows"]] + [[g, ", ".join(map(str, rows))] for g, rows in FAB_GROUPS], [5.0, 1.5]),
           p("Rows 6, 9, 16, 19 and 39 pass the deterministic scorers only because they give no annotation; the "
             "deterministic scorers do not check that the reply explains why.", SMALL),
-          p("5.4 Compared with the November 20 run", H2),
-          table([["Scorer", "November 20", "November 21"]] +
-                [[k, f"{int(prev.loc[pm, k].sum())}/{int(pm.sum())}", f"{M[k][0]}/{M[k][1]}"]
-                 for k, pm in [("annotated_title_exact", prev.index == prev.index),
-                               ("erratum_note_exact", prev.index == prev.index),
-                               ("original_mms_id_match", prev["case"].isin(["annotated", "already_annotated"])),
-                               ("called_tool", ~prev["case"].isin(["manual_review", "no_file_no_original"])),
-                               ("correctness", prev.index == prev.index),
-                               ("no_fabrication", prev.index == prev.index)]] +
-                [["Median latency", f"{prev.latency_s.median():.1f} s", f"{lat.median():.1f} s"]],
-                [2.5, 2.0, 2.0]),
-          p("Between the runs, mcp-erratum-note gained error handling and the agent instructions were updated "
-            "(erratum-annotator/agent/README.md, instructions in use since November 21, 2026).", SMALL)]
+          p("5.4 Compared with earlier runs", H2),
+          table([["Scorer", "November 21", "November 22, no agent trace", "November 22, traces in UC"]] +
+                [[k] + [f"{int(d.loc[m(d), k].astype(str).eq('True').sum())}/{int(m(d).sum())}" for d in (prev, base, r)]
+                 for k, m in [("annotated_title_exact", lambda d: d.index == d.index),
+                              ("erratum_note_exact", lambda d: d.index == d.index),
+                              ("original_mms_id_match", lambda d: d["case"].isin(["annotated", "already_annotated"])),
+                              ("called_tool", lambda d: ~d["case"].isin(["manual_review", "no_file_no_original"])),
+                              ("correctness", lambda d: d.index == d.index),
+                              ("no_fabrication", lambda d: d.index == d.index)]] +
+                [["Median latency"] + [f"{d.latency_s.median():.1f} s" for d in (prev, base, r)]],
+                [2.0, 1.4, 1.6, 1.5]),
+          p("The November 21 run was scored against the ground truth before row 41's change (one expected note); "
+            "both November 22 runs use the updated ground truth. Between November 21 and 22, mcp-erratum-note returns "
+            "a blank annotated_title when the response has no original or no correction record.", SMALL)]
 
 # 6. Latency and tool use
 tools = r["tools"].replace("", "(none)").value_counts()
-story += [p("6. Latency and tool use", H1),
+story += [p("6. Latency, tool calls and token usage", H1),
+          p(f"From the {len(traces)} full-run traces in Unity Catalog (states: "
+            + ", ".join(f"{k} {v}" for k, v in t_states.items()) + ") and the per-row results.", SMALL),
           table([["Measure", "Value"],
-                 ["Per-request latency (53 rows)", f"mean {lat.mean():.1f} s, median {lat.median():.1f} s, "
-                                                  f"p90 {lat.quantile(0.9):.1f} s, max {lat.max():.1f} s"],
+                 [f"Per-request latency ({N} rows)", f"p50 {pct(t_lat, 50):.1f} s, p90 {pct(t_lat, 90):.1f} s, "
+                                                  f"p95 {pct(t_lat, 95):.1f} s, p99 {pct(t_lat, 99):.1f} s, max {t_lat.max():.1f} s"],
                  ["Rows with an SRU file", f"median {r.loc[has_file, 'latency_s'].median():.1f} s (one tool call, one approval)"],
-                 ["Rows without an SRU file", f"median {r.loc[~has_file, 'latency_s'].median():.1f} s (mostly no tool call)"],
+                 ["Rows without an SRU file", f"median {r.loc[~has_file, 'latency_s'].median():.1f} s (no tool call)"],
                  ["Slowest row", f"row {int(r.loc[lat.idxmax(), 'row_num'])}: {lat.max():.1f} s (reply correct)"],
-                 ["Endpoint errors / truncated loops", f"{int((r.error != '').sum())} / {int(r.truncated.sum())}"]] +
-                [[f"Tools used: {k}", f"{v} rows"] for k, v in tools.items()],
-                [2.4, 4.1])]
+                 ["Endpoint errors / truncated loops", f"{int((r.error != '').sum())} / {int(r.truncated.sum())}"],
+                 ["Tool calls (TOOL spans)", ", ".join(f"{k} {v}" for k, v in t_tool_names.items())
+                  + f"; {t_tool_err} errors; p50 {pct(t_tool_ms, 50):.0f} ms, p95 {pct(t_tool_ms, 95):.0f} ms, "
+                    f"max {t_tool_ms.max():.0f} ms"],
+                 ["LLM calls (CHAT_MODEL spans)", f"{len(t_llm)}, about {len(t_llm) / len(traces):.1f} per request; "
+                                                  f"p50 {pct(t_llm_s, 50):.1f} s, p95 {pct(t_llm_s, 95):.1f} s"],
+                 ["Input tokens per request", f"median {int(np.median(t_in)):,}, mean {int(t_in.mean()):,}, max {int(t_in.max()):,}"],
+                 ["Output tokens per request", f"median {int(np.median(t_out)):,}, mean {int(t_out.mean()):,}, max {int(t_out.max()):,}"],
+                 ["Tokens, whole run", f"{int(t_in.sum()):,} input + {int(t_out.sum()):,} output = {int(t_in.sum() + t_out.sum()):,}"]] +
+                [[f"Rows by tool used: {k}", f"{v} rows"] for k, v in tools.items()],
+                [2.4, 4.1]),
+          p(f"Median latency was {lat.median():.1f} s, against {base.latency_s.median():.1f} s in the same day's run "
+            "that did not ask the endpoint to return its trace. Returning the trace may add time; this was not "
+            "measured separately.", SMALL)]
 
 # 7. Findings and recommendations
 story += [p("7. Findings and recommendations", H1),
           *bullets([
               "<b>Take the catalog title from the tool result, not the reply.</b> The Supervisor Agent cannot output the "
-              "curly apostrophe U+2019: given d’I in a plain message, it reports the character as U+0027. A stronger "
+              "curly apostrophe U+2019: given d\u2019I in a plain message, it reports the character as U+0027. A stronger "
               "instruction (worked example, character check, title in a code block) gave 0 of 6 exact on rows 34 and 40, "
-              "the same as before, so it was reverted. The tool's annotated_title is exact on all rows; librarians should "
-              "copy it from the tool result, and tool_annotated_title_exact now scores it.",
-              "<b>Decide what the agent should say with no SRU file.</b> None of the 5 no-file replies asks for XML (all 5 did "
-              "on November 20). Rows 9 and 39 are 'no original in Alma' in the ground truth, but the request only says "
-              "no SRU response is saved, so the agent cannot tell that the original is missing. Either pass the librarian's "
-              "Alma search result in the request, or change the expected facts for these rows.",
-              "<b>Track Supervisor latency and timeouts.</b> No timeouts in this run (1/53 on November 20), but row 13 took "
-              f"{lat.max():.0f} s against a median of {lat.median():.1f} s. Detect a 'Request Time Out' reply in the "
-              "predict function and retry once.",
-              "<b>Replace or ground the no_fabrication judge.</b> All 11 of its failures here are judge errors (10 of 16 on "
-              "November 20). Either pass the "
-              "tool outputs to the judge as context, or use a deterministic check that every MMS ID and DOI in the reply "
-              "appears in a tool output.",
+              "so it was reverted. The tool's annotated_title is exact on all rows; librarians should copy it from the "
+              "tool result, and tool_annotated_title_exact scores it.",
+              "<b>Two corrections in one original work end to end.</b> Row 41's reply carries both notes in date order "
+              "and passes both exact scorers.",
+              f"<b>No SRU file.</b> None of the {len(NO_FILE)} no-file replies calls a tool or asks for XML. Rows "
+              + ", ".join(map(str, MANUAL_ROWS)) + " say the notice needs manual review; rows "
+              + " and ".join(map(str, NO_ORIG_ROWS)) + ", whose requests pass on the librarian's Alma search result, "
+              "say the original is not in Alma.",
+              f"<b>Watch latency and cost.</b> p95 {pct(t_lat, 95):.1f} s, max {t_lat.max():.1f} s, no timeouts. Each "
+              f"request uses about {int(np.median(t_in)):,} input tokens, mostly the agent's instructions and context; "
+              "the experiment's overview now tracks this over time.",
+              f"<b>Replace or ground the no_fabrication judge.</b> All {n_fab} of its failures here are judge errors "
+              "(11 on November 21). Either pass the tool outputs to the judge as context, or use a deterministic check "
+              "that every MMS ID and DOI in the reply appears in a tool output.",
               "<b>Validate scorers on real replies.</b> Synthetic self-checks passed, but real replies restated notes "
               "and used placeholders. Keep the smoke test and the regression cases.",
-              "<b>Grow the dataset.</b> Add Sample3 (142 rows) once its SRU responses are saved, plus multi-correction "
-              "responses and needs_review cases.",
+              f"<b>Grow the dataset.</b> {n_saved} SRU responses are saved, including 25 from Sample 4 (row 4: two "
+              "corrections in one original; row 25: only the original in Alma). Add them once they have librarian-checked "
+              "titles, and Sample3 (142 rows) once its SRU responses are saved.",
           ])]
 
 # 8. MCP server test (Inspector Gadget)
@@ -302,7 +363,7 @@ story += [p("8. MCP server test (Inspector Gadget)", H1),
           p("Rows 4 and 24 are the only differences. Alma has no original for them, so the ground-truth title is "
             "blank. The tool correctly returns no original_id, but it still builds an annotated title from the search "
             "title and sets needs_review to false. Recommendation: when no original is found, return no annotated_title "
-            "or set needs_review to true."),
+            "or set needs_review to true. Done November 22, 2026: annotated_title is now blank when no original is found (section 10)."),
           p("The tool answers in under a second, so nearly all of the agent's per-request time (section 6) is spent "
             "in the Supervisor Agent, not in the MCP server.")]
 
@@ -323,12 +384,11 @@ story += [p("9. Artifacts and reproduction", H1),
           p("To reproduce: run the evaluation notebook top to bottom (cells 2 to 4 need no agent calls), then this "
             "notebook. The rescore cell reapplies the deterministic scorers to saved replies.", SMALL)]
 
-# 10. Update, November 22, 2026: two corrections in one original title (computed from the current code and files)
-import importlib.util, os, sys as _sys
+# 10. Changes since the November 21 run (computed from the current code and files)
+import importlib.util
 _ANN = "/Workspace/Users/amanda.xu@usda.gov/NAL/erratum-annotator/mcp_server/erratum_annotator.py"
 _spec = importlib.util.spec_from_file_location("erratum_annotator_now", _ANN)
 ea_now = importlib.util.module_from_spec(_spec); _spec.loader.exec_module(ea_now)
-SRU_DIR = "/Volumes/users/amanda_xu/erratum_files/sru_responses"
 GT_CSV = "/Volumes/users/amanda_xu/erratum_files/Correction-Sample1-53-annotated.csv"
 _xml = lambda f: open(f"{SRU_DIR}/{f}", encoding="utf-8-sig").read()
 TWO = [("Sample 4, row 4", "Sample4-Row4-9917012079207426-TwoCorrectionsInOneOriginalTitle.xml", "9917012079207426"),
@@ -347,34 +407,34 @@ for _, g in gt_now.iterrows():
         now_ok += 1
     else:
         now_diff.append(int(g.row_num))
-assert now_diff == [4, 24], f"tool vs updated ground truth changed: {now_diff}"
+assert now_diff == [], f"tool vs updated ground truth changed: {now_diff}"
 assert gt_now.loc[gt_now.row_num == "41", "annotated_title"].item() == two["Sample 1, row 41"]["annotated_title"]
-reply41 = r.loc[r.row_num == 41, "reply"].iloc[0]
-assert reply41.count("[Erratum:") == 1 and "mycokeys.124.171105" not in reply41
-n_saved = len([f for f in os.listdir(SRU_DIR) if f.endswith(".xml")])
-story += [p("10. Update, November 22, 2026: two corrections in one original title", H1),
-          p("New rule from the project owner: when an SRU response holds two or more correction records of one original "
-            "article, every correction's erratum note goes into the single original title, ordered by date (year, month, "
-            "day), then volume, issue and page. mcp-erratum-note, the UC function process_sru_response and the "
-            "offline demo use it since November 22, 2026. Of the saved responses, two have this case:"),
+_r25 = ea_now.process_sru_response(_xml("Sample4-Row25-9917162397207426-OnlyOriginalTitle.xml"), "", "9917162397207426")
+assert _r25["annotated_title"] == "" and _r25["num_corrections"] == 0
+story += [p("10. Changes since the November 21 run", H1),
+          p("<b>Two corrections in one original title.</b> New rule from the project owner: when an SRU response holds "
+            "two or more correction records of one original article, every correction's erratum note goes into the single "
+            "original title, ordered by date (year, month, day), then volume, issue and page. Two saved responses have "
+            "this case:"),
           table([["Notice", "Notes appended, in order"]] +
                 [[lab, "  ".join(v["erratum_notes"])] for lab, v in two.items()], [1.3, 5.2], code_cols=(1,)),
           Spacer(1, 4),
           *bullets([
               "<b>Ground truth changed for row 41.</b> Its expected annotated title in Correction-Sample1-53-annotated "
               "now carries both notes (Nov. 13, 2025, then June 18, 2026). The previous files are kept as "
-              "Correction-Sample1-53-annotated-before-20261122.csv and .xlsx.",
-              "<b>Sections 1 to 9 are scored against the ground truth of November 21.</b> The agent's November 21 reply "
-              "for row 41 has only the June 18, 2026 note, so against the updated ground truth row 41 would fail "
-              "annotated_title_exact and erratum_note_exact. The agent has not been re-run since the rule change.",
+              "Correction-Sample1-53-annotated-before-20261122.csv and .xlsx. In this run the agent's row 41 reply "
+              "has both notes and passes.",
+              "<b>Blank annotated_title when nothing can be annotated.</b> If the response has no original record "
+              "(Sample 1 rows 4 and 24) or no correction record (Sample 4 row 25: only the original is in Alma, status "
+              "no_correction, with a manual-review warning), annotated_title is blank. This is the fix recommended in "
+              "section 8.",
               f"<b>Tool check against the updated ground truth.</b> process_sru_response, run now on the {now_n} Sample1 "
-              f"rows with a saved response, gives the expected annotated title on {now_ok}/{now_n}; the differences are "
-              f"rows {now_diff[0]} and {now_diff[1]}, as in section 8 (no original in Alma).",
-              f"<b>Saved responses.</b> {n_saved} files, now including Sample 4 rows 2 to 5. On November 22 the live "
-              f"mcp-erratum-note app (process_sru_file, as Inspector Gadget) returned the same annotated title as the "
-              f"code for all {n_saved}.",
-              "<b>Recommendation.</b> Re-run the agent evaluation with the updated ground truth and add Sample 4 row 4 "
-              "to the dataset as the second two-corrections case.",
+              f"rows with a saved response, gives the expected annotated title on {now_ok}/{now_n}.",
+              f"<b>Saved responses.</b> {n_saved} files: 48 from Sample 1, Sample 2 rows 3 and 14, and 25 from Sample 4 "
+              "(rows 2 to 30 except 16, 19, 20 and 22, which have no SRU response and need manual review).",
+              "<b>Traces in Unity Catalog.</b> The evaluation now writes to the experiment "
+              f"{runs['experiment']} (id {runs['experiment_id']}), bound to {TRACE_TABLES}. The earlier experiment keeps "
+              "the November 20 to 22 runs.",
           ])]
 
 
@@ -402,15 +462,16 @@ reader = PdfReader(OUTPUT_PATH)
 flat = " ".join(" ".join(page.extract_text() for page in reader.pages).split())
 print(f"{os.path.getsize(OUTPUT_PATH):,} bytes, {len(reader.pages)} pages")
 checks = ["1. Summary", "2. System under test", "3. Evaluation dataset", "4. Method", "5. Results",
-          "6. Latency and tool use", "7. Findings and recommendations", "8. MCP server test (Inspector Gadget)",
-          "9. Artifacts and reproduction", "erratum_mcp_inspector_test", ig_frac("title_ok"), ig_frac("mms_ok"),
-          f"median {ig.latency_sec.median():.2f} s",
+          "6. Latency, tool calls and token usage", "7. Findings and recommendations",
+          "8. MCP server test (Inspector Gadget)", "9. Artifacts and reproduction", "erratum_mcp_inspector_test",
+          ig_frac("title_ok"), ig_frac("mms_ok"),
           frac("annotated_title_exact"), frac("erratum_note_exact"), frac("original_mms_id_match"), frac("called_tool"),
           frac("correctness"), frac("no_fabrication"), runs["full_run_id"], runs["rescore_run_id"], runs["experiment_id"],
-          runs["endpoint"], "U+2019", "48 to 50/53", "40 to 52/53", f"max {lat.max():.1f} s",
-          "5.4 Compared with the November 20 run", "November 21, 2026", "row 13", "tool_annotated_title_exact", "U+0027",
-          "10. Update, November 22, 2026", "10.1007/s00018-025-05953-w", "10.3897/mycokeys.124.171105",
-          f"{now_ok}/{now_n}", "before-20261122"]
+          runs["endpoint"], "U+2019", "48 to 50/53", "40 to 52/53", f"max {t_lat.max():.1f} s",
+          "5.4 Compared with earlier runs", RUN_DATE, "tool_annotated_title_exact", "U+0027",
+          "10. Changes since the November 21 run", "10.1007/s00018-025-05953-w", "10.3897/mycokeys.124.171105",
+          f"{now_ok}/{now_n}", "before-20261122", "agent_erratum_eval_otel", f"{int(t_in.sum() + t_out.sum()):,}",
+          f"{len(t_tools)} tool calls", "no_correction"]
 missing = [c for c in checks if c not in flat]
 for c in checks:
     print("OK  " if c not in missing else "MISSING  ", c)
