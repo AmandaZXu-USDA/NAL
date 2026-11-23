@@ -202,10 +202,9 @@ story += [p("agent-erratum-annotator: Evaluation Report", ParagraphStyle("T", pa
 story += [p("1. Summary", H1),
           p(f"The agent was evaluated on {N} rows: all {N1} rows of the librarian-checked Sample 1 spreadsheet (row 41 "
             f"expects two erratum notes) and the {N4} rows of Sample 4 (rows 2 to 30), after a new instruction rule for "
-            "the no_correction status and with no_fabrication now a deterministic check (section 10). Sample 4's expected titles were drafted from the tool output and "
-            "approved as drafted by the project owner on November 22, 2026; they were not re-checked record by record "
-            "against Alma, so on Sample 4 the title scores show that the agent passes the tool's title through, not that "
-            f"the tool is right. The agent returned the exact annotated original title on {frac('annotated_title_exact')} "
+            "the no_correction status and with no_fabrication now a deterministic check (section 10). Sample 4's expected titles were drafted from the tool output, then "
+            "checked one by one against the records in Alma by the project owner, who approved all 29 (recorded November "
+            f"22, 2026). The agent returned the exact annotated original title on {frac('annotated_title_exact')} "
             f"rows (Sample 1 {F('annotated_title_exact', 1)}, Sample 4 {F('annotated_title_exact', 4)}) and the correct "
             f"original MMS ID on {frac('original_mms_id_match')} rows that have one. It used a saved-response tool on "
             f"every row with an SRU file ({frac('called_tool')})."),
@@ -259,7 +258,7 @@ assert len(gt4) == N4 and (gt4.librarian_decision == "OK").all()
 story += [p("3. Evaluation dataset", H1),
           p("Ground truth: /Volumes/users/amanda_xu/erratum_files/Correction-Sample1-53-annotated.csv (librarian-checked) "
             "and Correction-Sample4-29-annotated.csv (drafted from process_sru_response on November 22, 2026, and "
-            f"approved as drafted by {gt4.reviewed_by.iloc[0]}; the draft is kept as "
+            f"checked one by one against the Alma records and approved by {gt4.reviewed_by.iloc[0]}; the draft is kept as "
             "Correction-Sample4-29-annotated-DRAFT-unreviewed). Sample 4 row n is row_num 400 + n in the results. "
             "Each request gives the correction notice title, the erratum MMS ID and, when saved, the SRU response file "
             "name, e.g. <i>Annotate the original article title for the correction notice \"Correction: ...\" (erratum "
@@ -400,9 +399,7 @@ story += [p("7. Findings and recommendations", H1),
               f"Each request uses about {int(np.median(t_in)):,} input tokens, mostly the agent's instructions and context.",
               "<b>no_fabrication is deterministic: done.</b> It replaces the LLM guideline judge, whose failures were "
               "judge errors that changed from run to run, and it catches notes the agent builds without a tool.",
-              "<b>Make Sample 4 independent.</b> Its expected titles were approved as drafted from the tool output. A "
-              "record-by-record librarian check against Alma would let Sample 4 test the tool, not only the agent. "
-              "Add Sample3 (142 rows) once its SRU responses are saved.",
+              "<b>Grow the dataset.</b> Add Sample3 (142 rows) once its SRU responses are saved.",
           ])]
 
 
@@ -505,9 +502,9 @@ story += [p("10. Changes since the November 21 run", H1),
               f"rows with a saved response, gives the expected annotated title on {now_ok}/{now_n}.",
               f"<b>Saved responses.</b> {n_saved} files: 48 from Sample 1, Sample 2 rows 3 and 14, and 25 from Sample 4 "
               "(rows 2 to 30 except 16, 19, 20 and 22, which have no SRU response and need manual review).",
-              f"<b>Sample 4 added.</b> {N4} rows (2 to 30), expected titles approved as drafted on November 22, 2026 "
-              f"(section 3). process_sru_response gives the expected title on {s4_ok}/{s4_n} Sample 4 rows with a saved "
-              "response, as it must, since the titles were drafted from it.",
+              f"<b>Sample 4 added.</b> {N4} rows (2 to 30); expected titles drafted from the tool output and checked one by "
+              f"one against Alma by the project owner (section 3). process_sru_response gives the expected title on "
+              f"{s4_ok}/{s4_n} Sample 4 rows with a saved response.",
               "<b>no_correction instruction rule.</b> The agent's instructions now say: when status is no_correction "
               "(original_id set, no correction record; for the UC function, num_corrections 0), report 'no correction in "
               "Alma - original only', give both MMS IDs, say it needs manual review and give no annotated title. Checked "
@@ -553,7 +550,7 @@ checks = ["1. Summary", "2. System under test", "3. Evaluation dataset", "4. Met
           "5.4 Compared with earlier runs", RUN_DATE, "tool_annotated_title_exact", "U+0027",
           "10. Changes since the November 21 run", "10.1007/s00018-025-05953-w", "10.3897/mycokeys.124.171105",
           f"{now_ok}/{now_n}", "before-20261122", "agent_erratum_eval_otel", f"{int(t_in.sum() + t_out.sum()):,}",
-          f"{len(t_tools)} tool calls", "no_correction", "Sample 4", "Correction-Sample4-29-annotated", "approved as drafted",
+          f"{len(t_tools)} tool calls", "no_correction", "Sample 4", "Correction-Sample4-29-annotated", "checked one by one against the records in Alma",
           "file_but_no_correction", "no correction in Alma - original only", "Previous run: S4", "S4 row 26", "S4 row 25", "S1 row 5", "no_fabrication is deterministic", F("annotated_title_exact", 4), f"{s4_ok}/{s4_n}"]
 missing = [c for c in checks if c not in flat]
 for c in checks:

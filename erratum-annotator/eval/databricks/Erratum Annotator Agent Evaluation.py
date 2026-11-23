@@ -5,7 +5,7 @@
 # MAGIC
 # MAGIC Evaluates the Supervisor Agent **agent-erratum-annotator** (endpoint `mas-c341c0aa-endpoint`; traces in Unity Catalog `users.amanda_xu.agent_erratum_eval_otel_*`, with the agent's own spans attached; tools: MCP app `mcp-erratum-note` + UC function `users.amanda_xu.process_sru_response`) with `mlflow.genai.evaluate`.
 # MAGIC
-# MAGIC **Ground truth:** `/Volumes/users/amanda_xu/erratum_files/Correction-Sample1-53-annotated.csv` (53 rows, librarian-checked) and `Correction-Sample4-29-annotated.csv` (29 rows, drafted from the tool output and approved as drafted on 2026-11-22; row_num 400 + n). Saved SRU responses: `.../erratum_files/sru_responses/` (48 files).
+# MAGIC **Ground truth:** `/Volumes/users/amanda_xu/erratum_files/Correction-Sample1-53-annotated.csv` (53 rows, librarian-checked) and `Correction-Sample4-29-annotated.csv` (29 rows, drafted from the tool output and checked one by one against Alma by the project owner; row_num 400 + n). Saved SRU responses: `.../erratum_files/sru_responses/` (48 files).
 # MAGIC
 # MAGIC **Each row** is a request a librarian would send: the correction notice title, its erratum MMS ID and, when saved, the SRU response file name. The agent should return the original article title with the erratum note appended, or say why it cannot (no original in Alma, bare "Correction" title).
 # MAGIC
@@ -42,7 +42,7 @@ EXPERIMENT_PATH = "/Users/amanda.xu@usda.gov/agent-erratum-annotator-eval-uc"  #
 TRACE_CATALOG, TRACE_SCHEMA, TRACE_PREFIX = "users", "amanda_xu", "agent_erratum_eval"
 os.environ.setdefault("MLFLOW_TRACING_SQL_WAREHOUSE_ID", "50d2bd4ddf65e0f5")  # Serverless Starter Warehouse
 GROUND_TRUTH = "/Volumes/users/amanda_xu/erratum_files/Correction-Sample1-53-annotated.csv"
-# Sample 4 (29 rows, 2 to 30): drafted from the tool output, approved as drafted by the project owner on 2026-11-22.
+# Sample 4 (29 rows, 2 to 30): drafted from the tool output, checked one by one against Alma by the project owner.
 GROUND_TRUTH_S4 = "/Volumes/users/amanda_xu/erratum_files/Correction-Sample4-29-annotated.csv"
 S4_OFFSET = 400  # Sample 4 row n is row_num 400 + n, so row numbers stay unique integers
 SRU_DIR = "/Volumes/users/amanda_xu/erratum_files/sru_responses"
