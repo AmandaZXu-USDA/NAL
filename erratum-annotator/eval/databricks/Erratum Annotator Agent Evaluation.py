@@ -157,7 +157,7 @@ display(pd.DataFrame([{**r["tags"], "request": r["inputs"]["request"],
 import json
 
 from mlflow.entities import Feedback
-from mlflow.genai.scorers import Correctness, Guidelines, scorer
+from mlflow.genai.scorers import Correctness, scorer
 
 NOTE_RE = re.compile(r"\[Erratum:[^\]]*\]")
 # Placeholders used in prose ("the title already contains an [Erratum: ...] note") are not notes.
@@ -295,6 +295,33 @@ def tool_annotated_title_exact(outputs, expectations) -> Feedback:
     return Feedback(value=got == exp, rationale="Tool annotated_title matches" if got == exp else f"Tool returned: {got}")
 
 
+MMS_RE = re.compile(r"(?<!\d)\d{16}(?!\d)")
+DOI_RE = re.compile(r"\b10\.\d{4,9}/[^\s\]\)\"'<>,;]+", re.I)
+
+
+@scorer
+def no_fabrication(inputs, outputs, expectations=None) -> Feedback:
+    """Deterministic: every MMS ID, DOI and erratum note in the reply comes from a tool result or the request.
+
+    MMS IDs (16 digits, not inside a DOI) and DOIs may come from the tool calls (arguments and outputs) or the request
+    (the user's erratum MMS ID, the DOI in a correction title). Erratum notes must come from a tool output: the agent
+    never builds a note itself. Replaced the LLM guideline judge on November 22, 2026, which failed 14 to 21 correct
+    replies per run and passed a note the agent made up (Sample 1 row 39).
+    """
+    reply = _n(_reply(outputs))
+    req = inputs.get("request", "") if isinstance(inputs, dict) else str(inputs or "")
+    src = _n(" ".join(str(t.get("output") or "") + " " + str(t.get("arguments") or "")
+                      for t in _tool_calls(outputs)).replace('\\"', '"'))
+    grounded = src + " " + req
+    doi = lambda d: d.rstrip(".").lower()
+    bad_ids = sorted({m for m in MMS_RE.findall(DOI_RE.sub(" ", reply)) if m not in grounded})
+    bad_dois = sorted({doi(d) for d in DOI_RE.findall(reply)} - {doi(d) for d in DOI_RE.findall(grounded)})
+    bad_notes = sorted({x for x in _real_notes(reply) if x not in src})
+    bad = [f"MMS ID {x}" for x in bad_ids] + [f"DOI {x}" for x in bad_dois] + [f"note {x}" for x in bad_notes]
+    return Feedback(value=not bad, rationale=("Not in any tool result or the request: " + "; ".join(bad)) if bad
+                    else "Every MMS ID, DOI and erratum note in the reply is in a tool result or the request")
+
+
 SCORERS = [
     annotated_title_exact,  # primary
     erratum_note_exact,
@@ -302,19 +329,12 @@ SCORERS = [
     called_tool,
     tool_annotated_title_exact,  # catalog title from the tool result (reply can lose U+2019)
     Correctness(),  # LLM judge on expected_facts
-    Guidelines(
-        name="no_fabrication",
-        guidelines=[
-            "The response only reports annotated titles, erratum notes, DOIs and MMS IDs that come from the "
-            "tool results; it does not invent or alter them.",
-            "If no annotated title can be produced (no original record, a generic 'Correction' title, or a tool "
-            "error), the response says so plainly instead of guessing.",
-        ],
-    ),
+    no_fabrication,  # deterministic (was an LLM guideline judge until November 22, 2026)
 ]
 
 # --- Self-check: the deterministic scorers must pass on the ground truth itself and fail on a corrupted note.
-DET = [annotated_title_exact, erratum_note_exact, original_mms_id_match, called_tool, tool_annotated_title_exact]
+DET = [annotated_title_exact, erratum_note_exact, original_mms_id_match, called_tool, tool_annotated_title_exact,
+       no_fabrication]
 fails, caught = [], 0
 for r in eval_dataset:
     e = r["expectations"]
@@ -323,7 +343,8 @@ for r in eval_dataset:
                    {"original_id": e["expected_original_mms_id"], "annotated_title": e["expected_annotated_title"]},
                    ensure_ascii=False)}]}
     for s in DET:
-        if s(outputs=perfect, expectations=e).value is not True:
+        kw = {"inputs": r["inputs"]} if s.name == "no_fabrication" else {}
+        if s(outputs=perfect, expectations=e, **kw).value is not True:
             fails.append((r["tags"]["row_num"], s.name))
     if e["expected_erratum_note"]:
         broken = {**perfect, "response": perfect["response"].replace("[Erratum: ", "[Erratum: X ")}
@@ -378,6 +399,24 @@ no_tool = next(r for r in eval_dataset if r["expectations"]["expected_annotated_
 assert tool_annotated_title_exact(outputs={"response": no_tool["expected_annotated_title"], "tool_calls": []},
                                   expectations=no_tool).value is False
 print(f"Regression checks passed (tool title: {len(curly)} rows with U+2019)")
+
+# no_fabrication: an MMS ID, DOI or note that is in no tool result or the request must fail; the user's erratum MMS ID
+# and a note copied from the tool must pass; a note built without a tool (Sample 1 row 39, November 22) must fail.
+r_ok = next(r for r in eval_dataset if r["tags"]["case"] == "annotated")
+e, req = r_ok["expectations"], r_ok["inputs"]
+cid = re.search(r"erratum MMS ID (\d{16})", req["request"]).group(1)
+tool_out = [{"name": "process_sru_file", "output": json.dumps({"original_id": e["expected_original_mms_id"], "correction_id": cid,
+                                                               "annotated_title": e["expected_annotated_title"]}, ensure_ascii=False)}]
+good = {"response": f"{e['expected_annotated_title']}\nOriginal MMS ID: {e['expected_original_mms_id']}\nCorrection MMS ID: {cid}", "tool_calls": tool_out}
+assert no_fabrication(inputs=req, outputs=good).value is True
+assert no_fabrication(inputs=req, outputs={**good, "response": good["response"] + "\nAlso see 9910000000000000."}).value is False
+assert no_fabrication(inputs=req, outputs={**good, "response": good["response"] + " doi 10.9999/made.up"}).value is False
+assert no_fabrication(inputs=req, outputs={**good, "tool_calls": []}).value is False  # note and original ID without a tool
+r39 = next(r for r in eval_dataset if r["tags"]["row_num"] == "39")
+note39 = "Erratum note: [Erratum: 2026, v. 17, no., e168486, https://doi.org/10.3897/imafungus.17.168486]"
+assert no_fabrication(inputs=r39["inputs"], outputs={"response": "No original in Alma. Correction MMS ID 9917175906707426.", "tool_calls": []}).value is True
+assert no_fabrication(inputs=r39["inputs"], outputs={"response": note39, "tool_calls": []}).value is False
+print("no_fabrication regression checks passed")
 
 # COMMAND ----------
 
@@ -586,7 +625,7 @@ out = pd.DataFrame({
     "tools": df[out_col].map(lambda o: ";".join(sorted({t["name"] for t in _out(o).get("tool_calls", []) if t.get("name")}))),
     "error": df["error"], "truncated": df["truncated"],
     **{s.name: df["row_num"].map(lambda n, s=s: str(rs.loc[n, rd_val(s.name)]) == "True") for s in DET},
-    "correctness": judge("correctness"), "no_fabrication": judge("no_fabrication"),
+    "correctness": judge("correctness"),
     "title_rationale": df["row_num"].map(lambda n: rs.loc[n, rat("annotated_title_exact")]),
     "correctness_rationale": df[rat_df("correctness")],
     "no_fabrication_rationale": df[rat_df("no_fabrication")],
@@ -604,4 +643,4 @@ run_info = {"experiment": EXPERIMENT_PATH, "experiment_id": mlflow.get_experimen
 with open(f"{RESULTS_DIR}/agent-erratum-annotator-eval-runs-{RUN_TAG}.json", "w") as fh:
     json.dump(run_info, fh, indent=2)
 print(csv_path, len(out), "rows"); print(run_info)
-print(out[[s.name for s in DET] + ["correctness", "no_fabrication"]].sum().to_string())
+print(out[[s.name for s in DET] + ["correctness"]].sum().to_string())
