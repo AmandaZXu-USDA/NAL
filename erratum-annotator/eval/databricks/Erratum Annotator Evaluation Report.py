@@ -516,6 +516,28 @@ story += [p("10. Changes since the November 21 run", H1),
               "the November 20 to 22 runs.",
           ])]
 
+# Section 11: Playground demo prompt (step 2 of the two-app demo), checked November 23, 2026
+PG_PROMPT = 'Annotate the original article for correction notice MMS ID 9917175652607426. Correction notice title: Correction to: Climate‐driven insect pest outbreaks and food security risks: a review of adaptive strategies for resilient agriculture. The saved SRU response file is Sample1-Row42-9917175652607426.xml. Return the annotated original title, the erratum note, the original MMS ID, and whether it needs manual review.'
+_pg = ea_now.process_sru_response(_xml("Sample1-Row42-9917175652607426.xml"), "", "9917175652607426")
+assert _pg["annotated_title"] == 'Climate-driven insect pest outbreaks and food security risks: a review of adaptive strategies for resilient agriculture [Erratum: Sept. 2026, v. 99, no. 3, 111, 10.1007/s10340-026-02069-3]', _pg["annotated_title"]
+story += [p("11. Playground demo prompt (November 23, 2026)", H1),
+          p("Judges can repeat this check in the Databricks AI Playground. The demo uses one correction notice for both MCP "
+            "apps: MMS ID 9917175652607426 (Sample 1, row 42). This prompt is step 2. Step 1 (mcp-sru-syntax, which "
+            "builds the SRU URL) is in section 10 of the mcp-sru-syntax evaluation report."),
+          table([["Item", "Value"],
+                 ["Playground pane", "agent-erratum-annotator (serving endpoint mas-c341c0aa-endpoint)"],
+                 ["Prompt", PG_PROMPT],
+                 ["Tool called", "process_sru_file (mcp-erratum-note); approve the tool call in the Playground"],
+                 ["Annotated title", _pg["annotated_title"]],
+                 ["Original MMS ID", '9917015258907426'],
+                 ["Needs manual review", "No"],
+                 ["Result", "Matches the ground truth for row 42 in Correction-Sample1-53-annotated.csv; 13 s"],
+                ], [1.4, 5.1]),
+          Spacer(1, 4),
+          *bullets(["The prompts are also in the README files (repository root, submission/, sru-syntax-mcp/ and "
+                    "erratum-annotator/), under Playground demo: both MCP apps on one correction notice."])]
+
+
 
 def _footer(canvas, doc):
     canvas.saveState()
@@ -551,7 +573,8 @@ checks = ["1. Summary", "2. System under test", "3. Evaluation dataset", "4. Met
           "10. Changes since the November 21 run", "10.1007/s00018-025-05953-w", "10.3897/mycokeys.124.171105",
           f"{now_ok}/{now_n}", "before-20261122", "agent_erratum_eval_otel", f"{int(t_in.sum() + t_out.sum()):,}",
           f"{len(t_tools)} tool calls", "no_correction", "Sample 4", "Correction-Sample4-29-annotated", "checked one by one against the records in Alma",
-          "file_but_no_correction", "no correction in Alma - original only", "Previous run: S4", "S4 row 26", "S4 row 25", "S1 row 5", "no_fabrication is deterministic", F("annotated_title_exact", 4), f"{s4_ok}/{s4_n}"]
+          "file_but_no_correction", "no correction in Alma - original only", "Previous run: S4", "S4 row 26", "S4 row 25", "S1 row 5", "no_fabrication is deterministic", F("annotated_title_exact", 4), f"{s4_ok}/{s4_n}",
+          "11. Playground demo prompt", "9917175652607426", "mas-c341c0aa-endpoint"]
 missing = [c for c in checks if c not in flat]
 for c in checks:
     print("OK  " if c not in missing else "MISSING  ", c)
