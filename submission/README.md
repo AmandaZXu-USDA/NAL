@@ -149,6 +149,6 @@ See the PDFs for method, per-scorer results, findings and next steps.
 | Deploy and safety | [`sru-syntax-mcp/README.md`](../sru-syntax-mcp/README.md) | [`erratum-annotator/README.md`](../erratum-annotator/README.md#deploying-safely) |
 
 Both live apps are deployed from this repository. The hackathon judges see the copy in
-[`AmandaZXu-USDA/mcp-hackathon-demo-sru`](https://github.com/AmandaZXu-USDA/mcp-hackathon-demo-sru) (step 1 adapted
+[`gsa-mcp-hackathon/mcp-sru-erratum`](https://github.com/gsa-mcp-hackathon/mcp-sru-erratum) (pushed from the fork [`AmandaZXu-USDA/mcp-hackathon-demo-sru`](https://github.com/AmandaZXu-USDA/mcp-hackathon-demo-sru); step 1 adapted
 to the GSA template layout, step 2 byte-identical). The files in this folder are the same as that repo's
 `submission/` folder; update both together.

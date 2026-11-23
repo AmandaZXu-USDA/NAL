@@ -30,7 +30,7 @@ This project is the initial stage of automating that workflow:
 | Deploy | Declarative Automation Bundle `sru_syntax` in `sru-syntax-mcp/` | `databricks apps deploy` from `erratum-annotator/mcp_server` |
 
 Both live apps are deployed from this repository. The hackathon copy for judges,
-[`AmandaZXu-USDA/mcp-hackathon-demo-sru`](https://github.com/AmandaZXu-USDA/mcp-hackathon-demo-sru), mirrors
+[`gsa-mcp-hackathon/mcp-sru-erratum`](https://github.com/gsa-mcp-hackathon/mcp-sru-erratum) (pushed from the fork [`AmandaZXu-USDA/mcp-hackathon-demo-sru`](https://github.com/AmandaZXu-USDA/mcp-hackathon-demo-sru)), mirrors
 both projects (Project 1 in the GSA template layout, Project 2 byte-identical in `erratum-annotator/`); make
 changes here first, then copy them. The deck and both reports are in [`submission/`](submission/README.md).
 See [Deploying the two apps safely](#deploying-the-two-apps-safely); app details: [`sru-syntax-mcp/README.md`](sru-syntax-mcp/README.md) and
