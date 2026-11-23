@@ -610,7 +610,7 @@ display(bad[["row_num", "case", rd_val("annotated_title_exact"), rat("annotated_
 import json, os
 
 RESULTS_DIR = "/Workspace/Users/amanda.xu@usda.gov/erratum-annotator/eval/doc"
-RUN_TAG = "20261122-s4-nocorr"  # after the no_correction instruction rule  # date of the run; earlier runs' files (e.g. 20261120) are kept
+RUN_TAG = "20261122-detfab"  # deterministic no_fabrication scorer  # date of the run; earlier runs' files (e.g. 20261120) are kept
 os.makedirs(RESULTS_DIR, exist_ok=True)
 
 rs = rd.set_index("row_num")

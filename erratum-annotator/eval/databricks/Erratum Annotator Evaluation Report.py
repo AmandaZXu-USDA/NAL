@@ -10,13 +10,13 @@ import json
 import pandas as pd
 
 DOC = "/Workspace/Users/amanda.xu@usda.gov/NAL/erratum-annotator/eval/databricks/doc"
-RESULTS_CSV = f"{DOC}/agent-erratum-annotator-eval-results-20261122-s4-nocorr.csv"  # Sample 1 + 4, after the no_correction rule
-PRE_CSV = f"{DOC}/agent-erratum-annotator-eval-results-20261122-s4.csv"  # Sample 1 + 4, before the no_correction rule
+RESULTS_CSV = f"{DOC}/agent-erratum-annotator-eval-results-20261122-detfab.csv"  # Sample 1 + 4, deterministic no_fabrication
+PRE_CSV = f"{DOC}/agent-erratum-annotator-eval-results-20261122-s4-nocorr.csv"  # previous run: Sample 1 + 4, no_fabrication still an LLM judge
 UC_CSV = f"{DOC}/agent-erratum-annotator-eval-results-20261122-uc.csv"  # same day, Sample 1 only, traces in Unity Catalog
 GT4_CSV = "/Volumes/users/amanda_xu/erratum_files/Correction-Sample4-29-annotated.csv"
 PREV_CSV = f"{DOC}/agent-erratum-annotator-eval-results-20261121.csv"  # November 21 run, for comparison
 BASE_CSV = f"{DOC}/agent-erratum-annotator-eval-results-20261122.csv"  # same day, same scorers, no agent trace returned
-RUNS_JSON = f"{DOC}/agent-erratum-annotator-eval-runs-20261122-s4-nocorr.json"
+RUNS_JSON = f"{DOC}/agent-erratum-annotator-eval-runs-20261122-detfab.json"
 OUTPUT_PATH = f"{DOC}/agent-erratum-annotator-evaluation-report.pdf"
 RUN_DATE = "November 22, 2026"
 SRU_DIR = "/Volumes/users/amanda_xu/erratum_files/sru_responses"
@@ -153,9 +153,10 @@ rows_of = lambda mask: sorted(r.loc[mask, "row_num"].tolist())
 # The asserts stop the build if a rerun produces a different set of failures.
 _CURLY = ("Erratum note correct, but the agent replaced the curly apostrophe (U+2019) in the catalog title with a "
           "straight one; the tool's annotated_title was exact.")
-_TIMEOUT = ("Agent timeout: the request reached the Supervisor Agent's 290 s limit (302.2 s end to end) and the reply "
+_TIMEOUT = ("Agent timeout: the request reached the Supervisor Agent's 290 s limit (302.4 s end to end) and the reply "
             "was a continue / wrap up prompt, with no title, note or MMS ID.")
 DET_FAIL = {
+    5: _TIMEOUT,
     404: "Both notes, in date order; " + _CURLY[0].lower() + _CURLY[1:],
     429: _CURLY,
     34: "Erratum note correct, but the agent replaced the curly apostrophe (U+2019) in the catalog title with a straight one; the tool's annotated_title was exact.",
@@ -166,21 +167,17 @@ assert set(rows_of(~r.annotated_title_exact | ~r.erratum_note_exact | ~r.origina
 CORR_FAIL = {
     4: "Judge error: the reply says Alma has only the correction notice and gives no annotated title, as expected; the "
        "judge failed it because the reply does not also say that it gives no search_title fallback.",
+    5: _TIMEOUT,
+    24: "Judge error: the reply says Alma has only the correction notice and gives no annotated title, as expected; the "
+        "judge failed it because the reply does not also say that it gives no search_title fallback.",
     41: "Judge error: says the reply's original MMS ID differs from the expected one; both are 9916848606207426. Both "
         "notes and the title are exact.",
 }
 assert set(rows_of(~r.correctness)) == set(CORR_FAIL), "Correctness failures changed: update CORR_FAIL"
-FAB_GROUPS = [
-    ("Judge error: treats the original article's MMS ID as invented because it differs from the correction notice's MMS ID "
-     "or is not in the request. It comes from process_sru_file (original_id) and matches the ground truth.",
-     [3, 7, 21, 22, 38, 42, 44, 47, 52, 402, 405, 408, 410, 411, 412, 421, 428]),
-    ("Judge error: applies the 'say so when no annotated title can be produced' guideline to replies that did give "
-     "the exact title (or, row 35, correctly said it was already annotated).", [35, 48, 49, 50]),
-]
-assert sorted(sum((g for _, g in FAB_GROUPS), [])) == rows_of(~r.no_fabrication), "no_fabrication failures changed"
-assert r.loc[r.row_num.isin(FAB_GROUPS[0][1]), "original_mms_id_match"].all()
+assert rows_of(~r.no_fabrication) == [], "no_fabrication failures changed"
 n_fab = int((~r.no_fabrication).sum())
-assert not r.reply.str.contains("Request Time Out").any(), "a request timed out"
+TIMEOUTS = rows_of(r.reply.str.contains("Request Time Out"))
+assert TIMEOUTS == [5], f"timeouts changed: {TIMEOUTS}"
 reply404 = r.loc[r.row_num == 404, "reply"].iloc[0]
 assert r.loc[r.row_num == 404, "erratum_note_exact"].item() and "10.1007/s00018-025-05965-6" in reply404 \
     and reply404.index("05965-6") < reply404.index("05953-w")
@@ -205,19 +202,22 @@ story += [p("agent-erratum-annotator: Evaluation Report", ParagraphStyle("T", pa
 story += [p("1. Summary", H1),
           p(f"The agent was evaluated on {N} rows: all {N1} rows of the librarian-checked Sample 1 spreadsheet (row 41 "
             f"expects two erratum notes) and the {N4} rows of Sample 4 (rows 2 to 30), after a new instruction rule for "
-            "the no_correction status (section 10). Sample 4's expected titles were drafted from the tool output and "
+            "the no_correction status and with no_fabrication now a deterministic check (section 10). Sample 4's expected titles were drafted from the tool output and "
             "approved as drafted by the project owner on November 22, 2026; they were not re-checked record by record "
             "against Alma, so on Sample 4 the title scores show that the agent passes the tool's title through, not that "
             f"the tool is right. The agent returned the exact annotated original title on {frac('annotated_title_exact')} "
             f"rows (Sample 1 {F('annotated_title_exact', 1)}, Sample 4 {F('annotated_title_exact', 4)}) and the correct "
             f"original MMS ID on {frac('original_mms_id_match')} rows that have one. It used a saved-response tool on "
             f"every row with an SRU file ({frac('called_tool')})."),
-          p("All four exact-title failures (S1 rows 34 and 40, S4 rows 4 and 29) come from a limitation of the "
-            "Supervisor Agent: it cannot output the curly apostrophe (U+2019) and writes a straight one. The tool result "
-            f"has the exact catalog title on every row ({frac(TOOL_COL)}, tool_annotated_title_exact). There were no "
-            "endpoint errors, timeouts or unfinished approval loops. S4 row 25 is now labelled 'no correction in Alma - "
-            f"original only'. None of the {len(NO_FILE)} notices with no saved SRU response called a tool or asked for "
-            f"SRU XML. All {n_fab} no_fabrication failures and both correctness failures are judge errors."),
+          p("Four exact-title failures (S1 rows 34 and 40, S4 rows 4 and 29) come from a limitation of the Supervisor "
+            "Agent: it cannot output the curly apostrophe (U+2019) and writes a straight one; the tool result has the "
+            "exact catalog title on those rows. The fifth, S1 row 5, is an agent timeout: the agent called the tool but "
+            "reached its 290 s limit and replied with a continue / wrap up prompt. It is the only row failing "
+            f"tool_annotated_title_exact ({frac(TOOL_COL)}). There were no endpoint errors or unfinished approval loops. "
+            "S4 row 25 is labelled 'no correction in Alma - original only'. "
+            f"None of the {len(NO_FILE)} notices with no saved SRU response called a tool or asked for SRU XML. "
+            f"no_fabrication, now deterministic, passes {frac('no_fabrication')}. Besides the timeout, the "
+            f"{len(CORR_FAIL) - 1} correctness failures are judge errors."),
           p(f"Traces are stored in Unity Catalog ({TRACE_TABLES}) with the agent's own trace attached to each request "
             f"(section 6): {len(t_tools)} tool calls with {t_tool_err} errors, and {int(t_in.sum() + t_out.sum()):,} "
             f"tokens for the {N} requests."),
@@ -229,7 +229,7 @@ story += [p("1. Summary", H1),
                                         ("called_tool", "Deterministic", "rows with an SRU file"),
                                         (TOOL_COL, "Deterministic", "all rows"),
                                         ("correctness", "LLM judge", "all rows"),
-                                        ("no_fabrication", "LLM guideline", "all rows")]],
+                                        ("no_fabrication", "Deterministic", "all rows")]],
                 [1.9, 0.9, 1.3, 1.0, 0.85, 0.85])]
 
 # 2. System under test
@@ -283,6 +283,9 @@ story += [p("4. Method", H1),
               "erratum_note_exact: the set of notes attached to the title equals the expected notes (one, or two for "
               "Sample 1 row 41 and Sample 4 row 4). Notes restated after a label (e.g. under Details) and placeholders such as [Erratum: ...] in "
               "prose are ignored.",
+              "no_fabrication (deterministic since November 22): every 16-digit MMS ID outside a DOI and every DOI in "
+              "the reply must appear in a tool call (arguments or output) or in the request, and every erratum note in "
+              "a tool output.",
               "Before any agent call, a self-check scores the ground truth itself (must pass), plus corrupted notes, "
               "doubled notes and markdown-formatted titles (67/67 each), and regression cases from earlier runs.",
               "A 5-row smoke test (Sample 1 rows 4, 41, 43; Sample 4 rows 4 and 25) preceded the full run (up to 3 parallel workers).",
@@ -315,23 +318,24 @@ story += [p("5. Results", H1), p("5.1 By case", H2),
           p("5.2 Deterministic failures", H2),
           table([["Row", "Case", "What happened"]] +
                 [[L(n), C(n), t] for n, t in sorted(DET_FAIL.items())], [0.5, 1.4, 4.6]),
-          p("5.3 LLM judges", H2),
+          p("5.3 LLM judge (correctness) and no_fabrication", H2),
           p(f"<b>correctness</b> {frac('correctness')}. Failing rows:"),
           table([["Row", "Case", "Reason"]] +
                 [[L(n), C(n), t] for n, t in sorted(CORR_FAIL.items())], [0.5, 1.4, 4.6]),
           Spacer(1, 6),
           p(f"<b>no_fabrication</b> {frac('no_fabrication')} (Sample 1 {F('no_fabrication', 1)}, Sample 4 "
-            f"{F('no_fabrication', 4)}). Reading the {n_fab} rationales: all are judge errors. The deterministic "
-            "scorers found no invented title, note or MMS ID. The same judge failed 14 rows in the previous 82-row run, "
-            "mostly different ones, so its result varies from run to run."),
-          table([["Group", "Rows"]] + [[g, ", ".join(L(n) for n in rows)] for g, rows in FAB_GROUPS], [4.6, 1.9]),
+            f"{F('no_fabrication', 4)}). Now a deterministic check (section 4): every MMS ID, DOI and erratum note in the "
+            "reply is in a tool result or the request. The LLM judge it replaced failed 14 to 21 correct replies per run, "
+            "and applied to the previous run's saved replies the check found one real fabrication the judge passed: an "
+            "erratum note the agent built for S1 row 39 without a tool call. In this run no reply has a note without a "
+            "tool call. A timed-out reply has no IDs, so it passes; the title scorers catch timeouts.", SMALL),
           p(", ".join(L(n) for n in NO_ANN) + " pass the deterministic scorers only because they give no annotation; "
             "the deterministic scorers do not check that the reply explains why. The report checks the status label: S4 "
             "row 25 says 'no correction in Alma - original only', and the " + str(len(NO_ORIG_LABEL)) + " no-original rows "
             "say 'no original in Alma'.",
             SMALL),
           p("5.4 Compared with earlier runs", H2),
-          table([["Scorer", "Nov. 21", "Nov. 22, UC traces", "Before rule: S1", "Before rule: S4", "This run: S1", "This run: S4"]] +
+          table([["Scorer", "Nov. 21", "Nov. 22, UC traces", "Previous run: S1", "Previous run: S4", "This run: S1", "This run: S4"]] +
                 [[k] + [f"{int(d.loc[m(d), k].astype(str).eq('True').sum())}/{int(m(d).sum())}" for d in (prev, uc, p1, p4, r1, r4)]
                  for k, m in [("annotated_title_exact", lambda d: d.index == d.index),
                               ("erratum_note_exact", lambda d: d.index == d.index),
@@ -344,8 +348,8 @@ story += [p("5. Results", H1), p("5.1 By case", H2),
           p("The November 21 run was scored against the ground truth before row 41's change (one expected note); "
             "all November 22 runs use the updated ground truth. Between November 21 and 22, mcp-erratum-note returns "
             "a blank annotated_title when the response has no original or no correction record. The first two runs are "
-            "Sample 1 only. 'Before rule' is the 82-row run before the no_correction instruction rule (run "
-            "bright-wolf-355; S4 row 26 timed out at 290 s there).", SMALL)]
+            "Sample 1 only. 'Previous run' is valuable-turtle-195, after the no_correction rule; no_fabrication was "
+            "still an LLM judge in all runs except this one, so that row is not comparable across columns.", SMALL)]
 
 # 6. Latency and tool use
 tools = r["tools"].replace("", "(none)").value_counts()
@@ -390,12 +394,12 @@ story += [p("7. Findings and recommendations", H1),
               "<b>no_correction status: done.</b> S4 row 25 (only the original in Alma) used to be labelled 'No original "
               "in Alma'. A new instruction rule gives the label 'no correction in Alma - original only'; in this run row 25 "
               "uses it and the no-original rows keep theirs (section 10).",
-              f"<b>Watch latency and cost.</b> p95 {pct(t_lat, 95):.1f} s, max {t_lat.max():.1f} s, no timeouts. The "
-              "previous run's 290 s timeout on S4 row 26 did not repeat (about 13 s in 3 manual re-runs and in this run). "
+              f"<b>Watch latency and cost.</b> p95 {pct(t_lat, 95):.1f} s, max {t_lat.max():.1f} s, one timeout (S1 row 5, after the tool call). "
+              "Timeouts are intermittent: S4 row 26 timed out two runs earlier and took about 13 s since, and S1 row 5 "
+              "passed in the previous run. "
               f"Each request uses about {int(np.median(t_in)):,} input tokens, mostly the agent's instructions and context.",
-              f"<b>Replace or ground the no_fabrication judge.</b> All {n_fab} of its failures here are judge errors, "
-              "most of them the same MMS ID mistake, and they change from run to run. Either pass the tool outputs to the judge as context, or use "
-              "a deterministic check that every MMS ID and DOI in the reply appears in a tool output.",
+              "<b>no_fabrication is deterministic: done.</b> It replaces the LLM guideline judge, whose failures were "
+              "judge errors that changed from run to run, and it catches notes the agent builds without a tool.",
               "<b>Make Sample 4 independent.</b> Its expected titles were approved as drafted from the tool output. A "
               "record-by-record librarian check against Alma would let Sample 4 test the tool, not only the agent. "
               "Add Sample3 (142 rows) once its SRU responses are saved.",
@@ -508,6 +512,8 @@ story += [p("10. Changes since the November 21 run", H1),
               "(original_id set, no correction record; for the UC function, num_corrections 0), report 'no correction in "
               "Alma - original only', give both MMS IDs, say it needs manual review and give no annotated title. Checked "
               "before this run: S4 row 25 3 of 3, and 7 regression rows pass.",
+              "<b>Deterministic no_fabrication.</b> The LLM guideline judge is replaced by a check that every MMS ID, "
+              "DOI and erratum note in the reply comes from a tool result or the request (section 4).",
               "<b>Traces in Unity Catalog.</b> The evaluation now writes to the experiment "
               f"{runs['experiment']} (id {runs['experiment_id']}), bound to {TRACE_TABLES}. The earlier experiment keeps "
               "the November 20 to 22 runs.",
@@ -548,7 +554,7 @@ checks = ["1. Summary", "2. System under test", "3. Evaluation dataset", "4. Met
           "10. Changes since the November 21 run", "10.1007/s00018-025-05953-w", "10.3897/mycokeys.124.171105",
           f"{now_ok}/{now_n}", "before-20261122", "agent_erratum_eval_otel", f"{int(t_in.sum() + t_out.sum()):,}",
           f"{len(t_tools)} tool calls", "no_correction", "Sample 4", "Correction-Sample4-29-annotated", "approved as drafted",
-          "file_but_no_correction", "no correction in Alma - original only", "Before rule: S4", "S4 row 26", "S4 row 25", F("annotated_title_exact", 4), f"{s4_ok}/{s4_n}"]
+          "file_but_no_correction", "no correction in Alma - original only", "Previous run: S4", "S4 row 26", "S4 row 25", "S1 row 5", "no_fabrication is deterministic", F("annotated_title_exact", 4), f"{s4_ok}/{s4_n}"]
 missing = [c for c in checks if c not in flat]
 for c in checks:
     print("OK  " if c not in missing else "MISSING  ", c)
